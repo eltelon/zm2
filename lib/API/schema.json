@@ -86,6 +86,10 @@
     "type": "string",
     "docDescription": "Define a specific log output type, possible value: json"
   },
+  "log_transport": {
+    "type": "string",
+    "docDescription": "Log transport: 'file' (default), 'syslog' (unix socket), or 'both'"
+  },
   "log_date_format": {
     "type": "string",
     "docDescription": "Format for log timestamps in day.js format (eg YYYY-MM-DD HH:mm Z)"
