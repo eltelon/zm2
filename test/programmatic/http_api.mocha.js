@@ -1,4 +1,6 @@
 var should = require('should');
+var path = require('path');
+var fs = require('fs');
 var HttpApi = require('../../lib/API/HttpApi');
 
 describe('HttpApi', function() {
@@ -132,6 +134,54 @@ describe('HttpApi', function() {
     it('should return 405 for GET on action routes', function() {
       var route = HttpApi.parseRoute('GET', '/api/processes/myapp/stop');
       route.handler.should.equal('methodNotAllowed');
+    });
+  });
+
+  describe('loadOrCreateApiKey', function() {
+    var tmpDir = path.join(__dirname, '..', 'tmp_api_key_test');
+    var keyPath;
+
+    beforeEach(function() {
+      if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+      keyPath = path.join(tmpDir, 'api-key');
+      if (fs.existsSync(keyPath)) fs.unlinkSync(keyPath);
+    });
+
+    afterEach(function() {
+      if (fs.existsSync(keyPath)) fs.unlinkSync(keyPath);
+      if (fs.existsSync(tmpDir)) fs.rmdirSync(tmpDir);
+    });
+
+    it('should generate a new key if none exists', function() {
+      var key = HttpApi.loadOrCreateApiKey(keyPath);
+      key.should.be.a.String();
+      key.length.should.equal(64);
+      fs.existsSync(keyPath).should.be.true();
+      fs.readFileSync(keyPath, 'utf8').should.equal(key);
+    });
+
+    it('should reuse existing key', function() {
+      fs.writeFileSync(keyPath, 'existingtoken123');
+      var key = HttpApi.loadOrCreateApiKey(keyPath);
+      key.should.equal('existingtoken123');
+    });
+  });
+
+  describe('checkAuth', function() {
+    it('should return true for valid bearer token', function() {
+      HttpApi.checkAuth('Bearer abc123', 'abc123').should.be.true();
+    });
+
+    it('should return false for invalid token', function() {
+      HttpApi.checkAuth('Bearer wrong', 'abc123').should.be.false();
+    });
+
+    it('should return false for missing header', function() {
+      HttpApi.checkAuth(undefined, 'abc123').should.be.false();
+    });
+
+    it('should return false for malformed header', function() {
+      HttpApi.checkAuth('Basic abc123', 'abc123').should.be.false();
     });
   });
 });
