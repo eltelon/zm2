@@ -83,6 +83,16 @@ Located at `$HOME/.zm2/`:
 
 All logging goes through **journald**. Use `zm2 logs <name>` which wraps `journalctl -u zm2-<name>`.
 
+## HTTP API & Prometheus
+
+`zm2 api [--port 9615]` starts an HTTP server with:
+- `GET /metrics` — Prometheus metrics (no auth)
+- `GET /api/processes` — List processes (requires bearer token)
+- `POST /api/processes` — Create new process (requires bearer token, body: `{script, name?, cwd?, interpreter?, env?}`)
+- `POST /api/processes/:name/start|stop|restart` — Control process (requires bearer token)
+
+API key auto-generated on first run, stored at `~/.zm2/api-key`. Printed to stdout on startup.
+
 ## Naming Convention (Fork from PM2)
 
 - **User-facing**: All CLI commands, console messages, env vars, and paths use `zm2`/`ZM2`
