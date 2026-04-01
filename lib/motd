@@ -1,36 +1,31 @@
 
                         -------------
 
-__/\\\\\\\\\\\\\____/\\\\____________/\\\\____/\\\\\\\\\_____
- _\/\\\/////////\\\_\/\\\\\\________/\\\\\\__/\\\///////\\\___
-  _\/\\\_______\/\\\_\/\\\//\\\____/\\\//\\\_\///______\//\\\__
-   _\/\\\\\\\\\\\\\/__\/\\\\///\\\/\\\/_\/\\\___________/\\\/___
-    _\/\\\/////////____\/\\\__\///\\\/___\/\\\________/\\\//_____
-     _\/\\\_____________\/\\\____\///_____\/\\\_____/\\\//________
-      _\/\\\_____________\/\\\_____________\/\\\___/\\\/___________
-       _\/\\\_____________\/\\\_____________\/\\\__/\\\\\\\\\\\\\\\_
-        _\///______________\///______________\///__\///////////////__
+ ________  ___      ___   ________
+|\_____  \|\  \    /  /| |\_____  \
+ \|___/  /\ \  \  /  / /  \|___/  /
+     /  / /\ \  \/  / /       /  / /
+    /  /_/__\ \    / /       /  /_/__
+   |\________\ \__/ /      |\________\
+    \|_______|\|__|/        \|_______|
 
 
                           Runtime Edition
 
-        PM2 is a Production Process Manager for Node.js applications
+        ZM2 is a Production Process Manager for Node.js applications
                      with a built-in Load Balancer.
 
                 Start and Daemonize any application:
-                $ pm2 start app.js
+                $ zm2 start app.js
 
                 Load Balance 4 instances of api.js:
-                $ pm2 start api.js -i 4
+                $ zm2 start api.js -i 4
 
                 Monitor in production:
-                $ pm2 monitor
+                $ zm2 monitor
 
-                Make pm2 auto-boot at server restart:
-                $ pm2 startup
-
-                To go further checkout:
-                http://pm2.io/
+                Make zm2 auto-boot at server restart:
+                $ zm2 startup
 
 
                         -------------

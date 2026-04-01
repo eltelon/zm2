@@ -1,8 +1,10 @@
-# CLAUDE.md - PM2 Project Guide
+# CLAUDE.md - ZM2 Project Guide
 
 ## Project Overview
 
-PM2 is a production process manager for Node.js/Bun applications with a built-in load balancer. Version 6.0.14, licensed under AGPL-3.0. Minimum Node.js version: 16.
+ZM2 is a **systemd-based** process manager for Node.js applications. Forked from PM2 6.0.14, published as `@zappinginc/zm2`. Licensed under AGPL-3.0. **Linux-only** (requires systemd). Minimum Node.js version: 16.
+
+Each application is managed as a systemd service unit. No daemon, no fork/cluster mode, no custom log files — everything goes through systemd and journald.
 
 ## Quick Commands
 
@@ -10,47 +12,91 @@ PM2 is a production process manager for Node.js/Bun applications with a built-in
 npm test              # Run all tests (e2e + unit)
 npm run test:unit     # Unit tests only (bash test/unit.sh)
 npm run test:e2e      # E2E tests only (bash test/e2e.sh)
-pm2 update            # Restart daemon after modifying Daemon.js, God.js, God/*, Watcher.js
 ```
 
 ## Architecture
 
-- **Entry points**: `index.js` (programmatic API), `bin/pm2` (CLI)
-- **API** (`lib/API.js`): Main programmatic interface, ~1900 lines
-- **Daemon** (`lib/Daemon.js`): Daemon lifecycle, uses pm2-axon for RPC/messaging
-- **God** (`lib/God.js` + `lib/God/`): Core process monitoring — ClusterMode, ForkMode, Reload, ActionMethods
-- **Client** (`lib/Client.js`): RPC client for daemon communication
-- **CLI** (`lib/binaries/CLI.js`): Commander.js-based CLI with 90+ options
-- **Process containers**: `ProcessContainer.js` (Node), `ProcessContainerBun.js` (Bun)
-- **API modules** (`lib/API/`): Dashboard, Deploy, Log, Startup, Modules, pm2-plus, etc.
+- **Entry points**: `index.js` (programmatic API), `bin/zm2` (CLI)
+- **API** (`lib/API.js`): Main programmatic interface — uses `SystemdClient` instead of daemon RPC
+- **SystemdClient** (`lib/SystemdClient.js`): Drop-in replacement for old `Client.js` — dispatches commands to systemd
+- **Systemd** (`lib/Systemd.js`): Low-level wrapper around `systemctl` and `journalctl`
+- **Systemd/UnitGenerator** (`lib/Systemd/UnitGenerator.js`): Generates systemd unit files from app config
+- **Systemd/StateStore** (`lib/Systemd/StateStore.js`): Persists ZM2 metadata to `~/.zm2/state.json`
+- **CLI** (`lib/binaries/CLI.js`): Commander.js-based CLI
+- **API modules** (`lib/API/`): Dashboard, Deploy, Log (journalctl-based), Startup, Modules
 - **Tools** (`lib/tools/`): Utility functions (Config, json5, sexec, which, etc.)
+
+### Data Flow
+
+```
+CLI/API → SystemdClient.executeRemote(method, data)
+  → dispatch to Systemd.js methods (systemctl/journalctl)
+  → StateStore for metadata persistence
+```
+
+### Key Mappings (pm2_env → systemd)
+
+| pm2_env field | systemd directive |
+|---|---|
+| `pm_exec_path` + `exec_interpreter` | `ExecStart` |
+| `pm_cwd` | `WorkingDirectory` |
+| `user` / `uid` | `User` |
+| `autorestart` | `Restart=on-failure` or `Restart=no` |
+| `restart_delay` | `RestartSec` |
+| `max_restarts` | `StartLimitBurst` |
+| `kill_timeout` | `TimeoutStopSec` |
+| `max_memory_restart` | `MemoryMax` |
+| `instances: N` | Template unit `zm2-app@.service` |
+| `cron_restart` | Systemd timer unit |
+| env vars | `EnvironmentFile=/etc/zm2/env/<name>.env` |
 
 ## Key Directories
 
 ```
-bin/          CLI entry points (pm2, pm2-dev, pm2-docker, pm2-runtime)
-lib/          Core source code
-lib/API/      Extended API modules (Deploy, Log, Startup, Modules, etc.)
-lib/God/      Process management submodules (ClusterMode, ForkMode, Reload)
-lib/binaries/ CLI implementations
-lib/tools/    Utility functions
-lib/templates/ Config templates & init scripts (systemd, upstart, launchd)
-test/         Tests
+bin/              CLI entry points (zm2, zm2-dev, zm2-docker, zm2-runtime)
+lib/              Core source code
+lib/Systemd/      Systemd integration (UnitGenerator, StateStore)
+lib/API/          Extended API modules (Deploy, Log, Startup, Modules, etc.)
+lib/binaries/     CLI implementations
+lib/tools/        Utility functions
+lib/templates/    Config templates
+test/             Tests
 test/programmatic/  Unit tests (Mocha + Should.js)
-test/e2e/     End-to-end tests (bash scripts)
-test/fixtures/ Test fixtures
-types/        TypeScript definitions
-examples/     Example applications
+test/e2e/         End-to-end tests (bash scripts)
+types/            TypeScript definitions
+examples/         Example applications
 ```
 
-## PM2 Runtime Files
+## Systemd Service Files
 
-Located at `$HOME/.pm2/`:
-- `pm2.log`, `pm2.pid` — daemon log and PID
-- `rpc.sock`, `pub.sock` — IPC sockets
-- `dump.pm2` — process list dump for resurrection
-- `logs/`, `pids/` — app logs and PIDs
-- `modules/` — installed PM2 modules
+Generated units are written to `/etc/systemd/system/zm2-<name>.service`.
+Environment files go to `/etc/zm2/env/zm2-<name>.env`.
+Requires root privileges.
+
+## ZM2 Runtime Files
+
+Located at `$HOME/.zm2/`:
+- `state.json` — registered services metadata (pm_id, name, script, instances)
+- `dump.zm2` — legacy process list dump (for migration)
+
+## Logging
+
+All logging goes through **journald**. Use `zm2 logs <name>` which wraps `journalctl -u zm2-<name>`.
+
+## Naming Convention (Fork from PM2)
+
+- **User-facing**: All CLI commands, console messages, env vars, and paths use `zm2`/`ZM2`
+- **Internal**: Variable names (`pm2_env`, `pm2_home`) and object property keys (`PM2_ROOT_PATH`) remain as `pm2` for compatibility
+- **Env vars**: `ZM2_HOME`, `ZM2_DEBUG`, etc. are preferred, with fallback to `PM2_*` equivalents
+
+## Removed Features (vs upstream PM2)
+
+- **No daemon** — CLI talks directly to systemd
+- **No fork/cluster mode** — all apps run as `Type=simple` systemd services
+- **No custom log files** — journald handles all logging
+- **No file watching** — removed chokidar
+- **No pm2-plus** — removed @pm2/agent, @pm2/io integration
+- **No pm2-axon/RPC** — removed socket-based communication
 
 ## Code Style
 
@@ -69,6 +115,10 @@ Located at `$HOME/.pm2/`:
 - UI: BDD
 - Exit: true
 
+New systemd-specific tests:
+- `test/programmatic/systemd_unit_generator.mocha.js` — UnitGenerator tests
+- `test/programmatic/systemd_state_store.mocha.js` — StateStore tests
+
 ## Commit Message Convention
 
 Prefix commits with: `fix:`, `hotfix:`, `feat:`, `docs:`, `BREAKING:`, `refactor:`, `perf:`, `style:`, `test:`, `chore:`
@@ -77,8 +127,8 @@ Keep description under 50 chars, lowercase except proper nouns/acronyms.
 
 ## CI
 
-GitHub Actions on push/PR — tests on Node 16.x and 24.x, plus separate Bun tests. Requires Python 3 and PHP CLI for some e2e tests. 30-minute timeout.
+GitHub Actions on push/PR — tests on Node 16.x and 24.x, plus separate Bun tests. E2E tests require Linux with systemd. 30-minute timeout.
 
 ## Key Dependencies
 
-- `commander` (CLI), `async`, `pm2-axon`/`pm2-axon-rpc` (IPC), `chokidar` (file watching), `croner` (cron), `pidusage` (process monitoring), `vizion` (VCS), `js-yaml`, `@pm2/io`, `@pm2/agent`
+- `commander` (CLI), `async`, `pidusage` (process monitoring), `js-yaml`, `dayjs`, `cli-tableau` (tables), `@pm2/blessed` (dashboard TUI), `pm2-deploy` (deployment)

@@ -4,6 +4,7 @@
  * can be found in the LICENSE file.
  */
 
+process.env.ZM2_PROGRAMMATIC = 'true';
 process.env.PM2_PROGRAMMATIC = 'true';
 
 var API = require('./lib/API.js');

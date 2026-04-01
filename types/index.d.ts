@@ -1,22 +1,17 @@
-// Type definitions for pm2 6.0.8
-// Definitions by: João Portela https://www.github.com/jportela
+// Type definitions for zm2 (systemd-based process manager, forked from pm2)
+// ZM2 manages applications as systemd services — no daemon required.
 
 // Exported Methods
 
 /**
- * Either connects to a running pm2 daemon (“God”) or launches and daemonizes one.
- * Once launched, the pm2 process will keep running after the script exits.
- * @param errback - Called when finished connecting to or launching the pm2 daemon process.
+ * Initializes ZM2 and verifies systemd is available.
+ * @param errback - Called when ZM2 is ready for commands.
  */
 export function connect(errback: ErrCallback): void;
 /**
- * Either connects to a running pm2 daemon (“God”) or launches and daemonizes one.
- * Once launched, the pm2 process will keep running after the script exits.
- * @param noDaemonMode - (Default: false) If true is passed for the first argument
- * pm2 will not be run as a daemon and will die when the related script exits.
- * By default, pm2 stays alive after your script exits.
- * If pm2 is already running, your script will link to the existing daemon but will die once your process exits.
- * @param errback - Called when finished connecting to or launching the pm2 daemon process.
+ * Initializes ZM2 and verifies systemd is available.
+ * @param noDaemonMode - Ignored in systemd mode (kept for API compat).
+ * @param errback - Called when ZM2 is ready for commands.
  */
 export function connect(noDaemonMode:boolean, errback: ErrCallback): void;
 
@@ -91,32 +86,23 @@ declare function del(process: string|number, errback: ErrProcCallback): void;
 export {del as delete};
 
 /**
- * Zero-downtime rolling restart. At least one process will be kept running at
- * all times as each instance is restarted individually.
- * Only works for scripts started in cluster mode.
- * @param process - Can either be the name as given in the pm2.start options,
- * a process id, or the string “all” to indicate that all scripts should be restarted.
+ * Reload a process via systemctl reload-or-restart.
+ * For template units (instances > 1), performs a rolling reload.
+ * @param process - Can either be the name, a process id, or “all”.
  * @param errback - called when the process is reloaded
  */
 export function reload(process: string|number, errback: ErrProcCallback): void;
 
 /**
- * Zero-downtime rolling restart. At least one process will be kept running at
- * all times as each instance is restarted individually.
- * Only works for scripts started in cluster mode.
- * @param process - Can either be the name as given in the pm2.start options,
- * a process id, or the string “all” to indicate that all scripts should be restarted.
+ * Reload a process via systemctl reload-or-restart.
+ * @param process - Can either be the name, a process id, or “all”.
  * @param options - An object containing configuration
- * @param options.updateEnv - (Default: false) If true is passed in, pm2 will reload it’s
- * environment from process.env before reloading your process.
  * @param errback - called when the process is reloaded
  */
 export function reload(process: string|number, options: ReloadOptions, errback: ErrProcCallback): void;
 
 /**
- * Kills the pm2 daemon (same as pm2 kill). Note that when the daemon is killed, all its
- * processes are also killed. Also note that you still have to explicitly disconnect
- * from the daemon even after you kill it.
+ * Stops all ZM2-managed systemd services.
  * @param errback
  */
 export function killDaemon(errback: ErrProcDescCallback): void;
@@ -163,8 +149,8 @@ export function dump(errback: ErrResultCallback): void;
 export function reloadLogs(errback: ErrResultCallback): void;
 
 /**
- * Opens a message bus.
- * @param errback The bus will be an Axon Sub Emitter object used to listen to and send events.
+ * Opens a log event bus backed by journalctl streaming.
+ * @param errback The bus will be an EventEmitter for log events.
  */
 export function launchBus(errback: ErrBusCallback): void;
 
@@ -183,25 +169,7 @@ export function sendSignalToProcessName(signal:string|number, process: number|st
  */
 export function startup(platform: Platform, errback: ErrResultCallback): void;
 
-/**
- * - Send an set of data as object to a specific process
- * @param proc_id
- * @param packet
- * @param cb
- */
-export function sendDataToProcessId(proc_id: number, packet: object, cb: ErrResultCallback): void;
-
-/**
- * - Send an set of data as object to a specific process
- * @param packet {id: number, type: 'process:msg', topic: true, data: object}
- */
-export function sendDataToProcessId(packet: {id: number, type: 'process:msg', topic: true, data: object}): void;
-
-/**
- * Launch system monitoring (CPU, Memory usage)
- * @param errback - Called when monitoring is launched
- */
-export function launchSysMonitoring(errback?: ErrCallback): void;
+// sendDataToProcessId and launchSysMonitoring removed — not available in systemd mode
 
 /**
  * Profile CPU or Memory usage
@@ -265,22 +233,7 @@ export function install(module_name: string, options?: InstallOptions, errback?:
  */
 export function uninstall(module_name: string, errback?: ErrCallback): void;
 
-/**
- * Send line to process stdin
- * @param pm_id - Process id
- * @param line - Line to send
- * @param separator - Line separator (default: '\n')
- * @param errback - Called when line is sent
- */
-export function sendLineToStdin(pm_id: string | number, line: string, separator?: string, errback?: ErrCallback): void;
-
-/**
- * Attach to process logs
- * @param pm_id - Process id
- * @param separator - Log separator
- * @param errback - Called when attached
- */
-export function attach(pm_id: string | number, separator?: string, errback?: ErrCallback): void;
+// sendLineToStdin and attach removed — no direct IPC in systemd mode
 
 /**
  * Get PM2 configuration value
@@ -523,12 +476,12 @@ export interface StartOptions {
    */
   interpreter?: string;
   /**
-   * (Default: ‘fork’) If sets to ‘cluster’, will enable clustering
-   * (running multiple instances of the script).
+   * Execution mode. Always ‘systemd’ in ZM2.
    */
   exec_mode?: string;
   /**
-   * (Default: 1) How many instances of script to create. Only relevant in exec_mode ‘cluster’.
+   * (Default: 1) How many instances of script to create.
+   * Creates systemd template units for N > 1.
    */
   instances?: number;
   /**

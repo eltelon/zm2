@@ -1,248 +1,187 @@
 <div align="center">
  <br/>
 
-![https://raw.githubusercontent.com/Unitech/pm2/master/pres/pm2-logo-2.png](https://raw.githubusercontent.com/Unitech/pm2/master/pres/pm2-logo-2.png)
+<h1>ZM2</h1>
 
-<b>P</b>(rocess) <b>M</b>(anager) <b>2</b><br/>
-  <i>Runtime Edition</i>
+<b>Z</b>(apping) <b>M</b>(anager) <b>2</b><br/>
+  <i>Systemd Edition</i>
 <br/><br/>
 
+A systemd-based process manager for Node.js applications on Linux.<br/>
+Forked from <a href="https://github.com/Unitech/pm2">PM2</a>.
 
-<a title="PM2 Downloads" href="https://npm-stat.com/charts.html?package=pm2&from=2018-01-01&to=2023-08-01">
-  <img src="https://img.shields.io/npm/dm/pm2" alt="Downloads per Month"/>
-</a>
-
-<a title="PM2 Downloads" href="https://npm-stat.com/charts.html?package=pm2&from=2018-01-01&to=2023-08-01">
-  <img src="https://img.shields.io/npm/dy/pm2" alt="Downloads per Year"/>
-</a>
-
-<a href="https://badge.fury.io/js/pm2" title="NPM Version Badge">
-   <img src="https://badge.fury.io/js/pm2.svg" alt="npm version">
-</a>
-
-<br/>
 <br/>
 <br/>
 </div>
 
+ZM2 manages your Node.js applications as **systemd services**. No custom daemon, no fork/cluster mode — each app becomes a native systemd unit with all the guarantees that come with it: cgroups, journald, automatic restart, boot persistence.
 
-PM2 is a production process manager for Node.js/Bun applications with a built-in load balancer. It allows you to keep applications alive forever, to reload them without downtime and to facilitate common system admin tasks.
-
-Starting an application in production mode is as easy as:
-
-```bash
-$ pm2 start app.js
-```
-
-PM2 is constantly assailed by [more than 1800 tests](https://github.com/Unitech/pm2/actions/workflows/node.js.yml).
-
-Official website: [https://pm2.keymetrics.io/](https://pm2.keymetrics.io/)
-
-Works on Linux (stable) & macOS (stable) & Windows (stable). All Node.js versions are supported starting Node.js 12.X and Bun since v1
-
-
-## Installing PM2
-
-### With NPM
+The CLI stays familiar if you come from PM2:
 
 ```bash
-$ npm install pm2 -g
+$ zm2 start app.js
 ```
 
-### With Bun
+**Linux only.** Requires systemd and root privileges. Node.js >= 16.
+
+## Installing ZM2
 
 ```bash
-$ bun install pm2 -g
+$ npm install @zappinginc/zm2 -g
 ```
-**Please note that you might need to symlink node to bun if you only want to use bun via `sudo ln -s /home/$USER/.bun/bin/bun /usr/bin/node`**
 
-___
-
-You can install Node.js easily with [NVM](https://github.com/nvm-sh/nvm#installing-and-updating) or [FNM](https://github.com/Schniz/fnm) or install Bun with `curl -fsSL https://bun.sh/install | bash`
+## Quick Start
 
 ### Start an application
 
-You can start any application (Node.js, Bun, and also Python, Ruby, binaries in $PATH...) like that:
-
 ```bash
-$ pm2 start app.js
+$ sudo zm2 start app.js
 ```
 
-Your app is now daemonized, monitored and kept alive forever.
+This generates a systemd unit `zm2-app.service`, writes an environment file to `/etc/zm2/env/`, and starts the service.
+
+You can start any interpreter (Node.js, Python, Ruby, binaries):
+
+```bash
+$ sudo zm2 start app.js
+$ sudo zm2 start script.py --interpreter python3
+$ sudo zm2 start ./mybin --interpreter none
+```
 
 ### Managing Applications
 
-Once applications are started you can manage them easily:
+```bash
+$ zm2 list                                  # List all services
+$ zm2 stop     <app_name|id|'all'>          # Stop
+$ zm2 restart  <app_name|id|'all'>          # Restart
+$ zm2 reload   <app_name|id|'all'>          # Reload (systemctl reload-or-restart)
+$ zm2 delete   <app_name|id|'all'>          # Stop + remove unit file
+$ zm2 describe <app_name|id>                # Show details
+```
 
-![Process listing](https://github.com/Unitech/pm2/raw/master/pres/pm2-ls-v2.png)
+### Logs (via journald)
 
-To list all running applications:
+All output goes through journald. No custom log files.
 
 ```bash
-$ pm2 list
+$ zm2 logs                  # Stream all zm2 logs
+$ zm2 logs app-name         # Stream logs for one app
+$ zm2 logs --json           # JSON output
+$ zm2 logs --format         # key=value output
 ```
 
-Managing apps is straightforward:
+### Monitoring
 
 ```bash
-$ pm2 stop     <app_name|namespace|id|'all'|json_conf>
-$ pm2 restart  <app_name|namespace|id|'all'|json_conf>
-$ pm2 delete   <app_name|namespace|id|'all'|json_conf>
+$ zm2 monit                 # Terminal-based CPU/memory monitor
 ```
 
-To have more details on a specific application:
+### Multiple Instances
 
 ```bash
-$ pm2 describe <id|app_name>
+$ sudo zm2 start api.js -i 4
 ```
 
-To monitor logs, custom metrics, application information:
+Creates a systemd template unit `zm2-api@.service` with instances `@0` through `@3`. Each instance gets `NODE_APP_INSTANCE` set to its index.
+
+### Ecosystem Config
 
 ```bash
-$ pm2 monit
+$ zm2 ecosystem             # Generate ecosystem.config.js template
+$ sudo zm2 start ecosystem.config.js
 ```
 
-[More about Process Management](https://pm2.keymetrics.io/docs/usage/process-management/)
+```javascript
+module.exports = {
+  apps: [{
+    name: 'api',
+    script: 'server.js',
+    instances: 2,
+    max_memory_restart: '500M',
+    env: {
+      NODE_ENV: 'production',
+      PORT: 3000
+    }
+  }]
+}
+```
 
-### Cluster Mode: Node.js Load Balancing & Zero Downtime Reload
-
-The Cluster mode is a special mode when starting a Node.js application, it starts multiple processes and load-balance HTTP/TCP/UDP queries between them. This increase overall performance (by a factor of x10 on 16 cores machines) and reliability (faster socket re-balancing in case of unhandled errors).
-
-![Framework supported](https://raw.githubusercontent.com/Unitech/PM2/master/pres/cluster.png)
-
-Starting a Node.js application in cluster mode that will leverage all CPUs available:
+### Boot Persistence
 
 ```bash
-$ pm2 start api.js -i <processes>
+# Enable all zm2 services to start on boot
+$ sudo zm2 startup
+
+# Disable
+$ sudo zm2 unstartup
 ```
 
-`<processes>` can be `'max'`, `-1` (all cpu minus 1) or a specified number of instances to start.
+### Configuration Mapping
 
-**Zero Downtime Reload**
+ZM2 maps familiar PM2 options to native systemd directives:
 
-Hot Reload allows to update an application without any downtime:
+| ZM2 / ecosystem option | systemd directive |
+|---|---|
+| `max_memory_restart` | `MemoryMax` |
+| `autorestart: true` | `Restart=on-failure` |
+| `restart_delay` | `RestartSec` |
+| `max_restarts` | `StartLimitBurst` |
+| `kill_timeout` | `TimeoutStopSec` |
+| `kill_signal` | `KillSignal` |
+| `cron_restart` | systemd timer unit |
+| `instances: N` | template unit with N instances |
+
+## Migrating from PM2
+
+ZM2 can migrate your running PM2 processes to systemd services:
 
 ```bash
-$ pm2 reload all
+# Preview what would be migrated
+$ sudo zm2 migrate --dry-run
+
+# Migrate all PM2 apps
+$ sudo zm2 migrate all
+
+# Migrate a specific app
+$ sudo zm2 migrate api-server
 ```
 
-[More informations about how PM2 make clustering easy](https://pm2.keymetrics.io/docs/usage/cluster-mode/)
+The migrate command reads from:
+1. A running PM2 daemon (`pm2 jlist`)
+2. PM2 dump file (`~/.pm2/dump.pm2`)
 
-### Container Support
-
-With the drop-in replacement command for `node`, called `pm2-runtime`, run your Node.js application in a hardened production environment.
-Using it is seamless:
-
-```
-RUN npm install pm2 -g
-CMD [ "pm2-runtime", "npm", "--", "start" ]
-```
-
-[Read More about the dedicated integration](https://pm2.keymetrics.io/docs/usage/docker-pm2-nodejs/)
-
-### Host monitoring speedbar
-
-PM2 allows to monitor your host/server vitals with a monitoring speedbar.
-
-To enable host monitoring:
-
+After migration:
 ```bash
-$ pm2 set pm2:sysmonit true
-$ pm2 update
+$ zm2 list                  # Verify services are running
+$ sudo zm2 startup          # Enable boot persistence
+$ pm2 kill                  # Stop old PM2 daemon
+$ pm2 unstartup             # Remove old PM2 startup hook
 ```
 
-![Framework supported](https://raw.githubusercontent.com/Unitech/PM2/master/pres/vitals.png)
+## Environment Variables
 
-### Terminal Based Monitoring
+| Variable | Description |
+|----------|-------------|
+| `ZM2_HOME` | Custom home directory (default: `~/.zm2`) |
+| `ZM2_DEBUG` | Enable debug mode |
+| `ZM2_KILL_TIMEOUT` | Process kill timeout (default: 1600ms) |
+| `ZM2_KILL_SIGNAL` | Kill signal (default: SIGINT) |
+| `ZM2_GRACEFUL_TIMEOUT` | Graceful shutdown timeout |
 
-![Monit](https://github.com/Unitech/pm2/raw/master/pres/pm2-monit.png)
+All `ZM2_*` variables fall back to `PM2_*` equivalents for compatibility.
 
-Monitor all processes launched straight from the command line:
+## What Changed from PM2
 
-```bash
-$ pm2 monit
-```
+ZM2 removes the custom daemon architecture in favor of systemd:
 
-### Log Management
-
-To consult logs just type the command:
-
-```bash
-$ pm2 logs
-```
-
-Standard, Raw, JSON and formated output are available.
-
-Examples:
-
-```bash
-$ pm2 logs APP-NAME       # Display APP-NAME logs
-$ pm2 logs --json         # JSON output
-$ pm2 logs --format       # Formated output
-
-$ pm2 flush               # Flush all logs
-$ pm2 reloadLogs          # Reload all logs
-```
-
-To enable log rotation install the following module
-
-```bash
-$ pm2 install pm2-logrotate
-```
-
-[More about log management](https://pm2.keymetrics.io/docs/usage/log-management/)
-
-### Startup Scripts Generation
-
-PM2 can generate and configure a Startup Script to keep PM2 and your processes alive at every server restart.
-
-Init Systems Supported: **systemd**, **upstart**, **launchd**, **rc.d**
-
-```bash
-# Generate Startup Script
-$ pm2 startup
-
-# Freeze your process list across server restart
-$ pm2 save
-
-# Remove Startup Script
-$ pm2 unstartup
-```
-
-[More about Startup Scripts Generation](https://pm2.keymetrics.io/docs/usage/startup/)
-
-### Updating PM2
-
-```bash
-# Install latest PM2 version
-$ npm install pm2@latest -g
-# Save process list, exit old PM2 & restore all processes
-$ pm2 update
-```
-
-*PM2 updates are seamless*
-
-## PM2+ Monitoring
-
-If you manage your apps with PM2, PM2+ makes it easy to monitor and manage apps across servers.
-
-![https://app.pm2.io/](https://pm2.io/img/app-overview.png)
-
-Feel free to try it:
-
-[Discover the monitoring dashboard for PM2](https://app.pm2.io/)
-
-Thanks in advance and we hope that you like PM2!
-
-## CHANGELOG
-
-[CHANGELOG](https://github.com/Unitech/PM2/blob/master/CHANGELOG.md)
-
-## Contributors
-
-[Contributors](http://pm2.keymetrics.io/hall-of-fame/)
+- **No daemon** — CLI talks directly to systemd via `systemctl`
+- **No fork/cluster mode** — apps run as `Type=simple` systemd services
+- **No custom log files** — journald handles all logging
+- **No file watching** — use external tools or CI/CD for deploys
+- **No pm2-plus** — cloud monitoring integration removed
 
 ## License
 
-PM2 is made available under the terms of the GNU Affero General Public License 3.0 (AGPL 3.0).
-For other licenses [contact us](mailto:contact@keymetrics.io).
+ZM2 is made available under the terms of the GNU Affero General Public License 3.0 (AGPL 3.0).
+
+Based on [PM2](https://github.com/Unitech/pm2) by Alexandre Strzelewicz and contributors.

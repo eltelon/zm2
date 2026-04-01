@@ -1,0 +1,35 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV container=docker
+
+# Install systemd + node
+RUN apt-get update && apt-get install -y \
+    systemd systemd-sysv \
+    curl ca-certificates \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install PM2 (to test migration from)
+RUN npm install -g pm2
+
+# Install ZM2 from local source
+COPY . /opt/zm2
+RUN cd /opt/zm2 && npm install && npm link
+
+# Create a test app
+RUN mkdir -p /app && echo "const http = require('http'); \
+const s = http.createServer((req, res) => res.end('ok')); \
+s.listen(3000, () => console.log('listening on 3000'));" > /app/server.js
+
+# Start some PM2 processes for migration testing
+RUN echo '#!/bin/bash\npm2 start /app/server.js --name createarray\npm2 start /app/server.js --name worker\npm2 save\nexec /sbin/init' > /start.sh \
+    && chmod +x /start.sh
+
+# systemd needs these
+STOPSIGNAL SIGRTMIN+3
+VOLUME ["/sys/fs/cgroup"]
+
+CMD ["/sbin/init"]
