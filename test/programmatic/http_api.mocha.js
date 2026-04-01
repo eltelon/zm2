@@ -29,6 +29,8 @@ describe('HttpApi', function() {
       output.should.containEql('zm2_process_status{name="myapp",status="online"} 1');
       output.should.containEql('zm2_process_status{name="myapp",status="stopped"} 0');
       output.should.containEql('zm2_process_status{name="myapp",status="errored"} 0');
+      // Uptime should be approximately 3600 seconds
+      output.should.match(/zm2_process_uptime_seconds\{name="myapp"\} 3[56]\d\d/);
     });
 
     it('should handle multiple processes', function() {
