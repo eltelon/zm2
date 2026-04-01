@@ -369,6 +369,23 @@ describe('HttpApi', function() {
       req.end();
     });
 
+    it('POST /api/processes should return 400 for invalid JSON body', function(done) {
+      var opts = {
+        hostname: '127.0.0.1', port: port, path: '/api/processes',
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + apiKey,
+          'Content-Type': 'application/json'
+        }
+      };
+      var req = http.request(opts, function(res) {
+        res.statusCode.should.equal(400);
+        done();
+      });
+      req.write('{broken json');
+      req.end();
+    });
+
     it('GET /unknown should return 404', function(done) {
       var opts = {
         hostname: '127.0.0.1', port: port, path: '/unknown',
