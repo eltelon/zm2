@@ -1,6 +1,7 @@
 var should = require('should');
 var path = require('path');
 var fs = require('fs');
+var http = require('http');
 var HttpApi = require('../../lib/API/HttpApi');
 
 describe('HttpApi', function() {
@@ -182,6 +183,195 @@ describe('HttpApi', function() {
 
     it('should return false for malformed header', function() {
       HttpApi.checkAuth('Basic abc123', 'abc123').should.be.false();
+    });
+  });
+
+  describe('HTTP server', function() {
+    var server;
+    var port = 19615;
+    var apiKey = 'testtoken123';
+    var mockApi;
+
+    before(function(done) {
+      mockApi = {
+        Client: {
+          executeRemote: function(method, data, cb) {
+            if (method === 'getMonitorData') {
+              return cb(null, [
+                {
+                  pid: 1234, name: 'testapp', pm_id: 0,
+                  pm2_env: { name: 'testapp', status: 'online', pm_uptime: Date.now() - 60000, restart_time: 1 },
+                  monit: { memory: 1024, cpu: 5.5 }
+                }
+              ]);
+            }
+            if (method === 'startProcessId') {
+              return cb(null, { pm_id: data.id, status: 'online' });
+            }
+            if (method === 'stopProcessId') {
+              return cb(null, { pm_id: data.id, status: 'stopped' });
+            }
+            if (method === 'restartProcessId') {
+              return cb(null, { pm_id: data.id, status: 'online' });
+            }
+            return cb(new Error('Unknown method: ' + method));
+          }
+        },
+        start: function(script, opts, cb) {
+          cb(null, [{ pm2_env: { name: opts.name || 'app', status: 'online' } }]);
+        }
+      };
+
+      server = HttpApi.createServer(mockApi, apiKey);
+      server.listen(port, done);
+    });
+
+    after(function(done) {
+      server.close(done);
+    });
+
+    it('GET /metrics should return prometheus text without auth', function(done) {
+      http.get('http://127.0.0.1:' + port + '/metrics', function(res) {
+        res.statusCode.should.equal(200);
+        res.headers['content-type'].should.startWith('text/plain');
+        var body = '';
+        res.on('data', function(chunk) { body += chunk; });
+        res.on('end', function() {
+          body.should.containEql('zm2_process_cpu_percent{name="testapp"} 5.5');
+          done();
+        });
+      });
+    });
+
+    it('GET /api/processes should require auth', function(done) {
+      http.get('http://127.0.0.1:' + port + '/api/processes', function(res) {
+        res.statusCode.should.equal(401);
+        done();
+      });
+    });
+
+    it('GET /api/processes should return JSON with valid auth', function(done) {
+      var opts = {
+        hostname: '127.0.0.1', port: port, path: '/api/processes',
+        headers: { 'Authorization': 'Bearer ' + apiKey }
+      };
+      http.get(opts, function(res) {
+        res.statusCode.should.equal(200);
+        var body = '';
+        res.on('data', function(chunk) { body += chunk; });
+        res.on('end', function() {
+          var data = JSON.parse(body);
+          data.processes.should.be.an.Array();
+          data.processes[0].name.should.equal('testapp');
+          done();
+        });
+      });
+    });
+
+    it('POST /api/processes/:name/stop should stop process', function(done) {
+      var opts = {
+        hostname: '127.0.0.1', port: port, path: '/api/processes/testapp/stop',
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + apiKey }
+      };
+      var req = http.request(opts, function(res) {
+        res.statusCode.should.equal(200);
+        var body = '';
+        res.on('data', function(chunk) { body += chunk; });
+        res.on('end', function() {
+          var data = JSON.parse(body);
+          data.success.should.be.true();
+          done();
+        });
+      });
+      req.end();
+    });
+
+    it('POST /api/processes/:name/restart should restart process', function(done) {
+      var opts = {
+        hostname: '127.0.0.1', port: port, path: '/api/processes/testapp/restart',
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + apiKey }
+      };
+      var req = http.request(opts, function(res) {
+        res.statusCode.should.equal(200);
+        var body = '';
+        res.on('data', function(chunk) { body += chunk; });
+        res.on('end', function() {
+          var data = JSON.parse(body);
+          data.success.should.be.true();
+          done();
+        });
+      });
+      req.end();
+    });
+
+    it('POST /api/processes should create a new process', function(done) {
+      var postData = JSON.stringify({ script: '/tmp/app.js', name: 'newapp' });
+      var opts = {
+        hostname: '127.0.0.1', port: port, path: '/api/processes',
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + apiKey,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(postData)
+        }
+      };
+      var req = http.request(opts, function(res) {
+        res.statusCode.should.equal(200);
+        var body = '';
+        res.on('data', function(chunk) { body += chunk; });
+        res.on('end', function() {
+          var data = JSON.parse(body);
+          data.success.should.be.true();
+          done();
+        });
+      });
+      req.write(postData);
+      req.end();
+    });
+
+    it('POST /api/processes should return 400 without script', function(done) {
+      var postData = JSON.stringify({ name: 'noapp' });
+      var opts = {
+        hostname: '127.0.0.1', port: port, path: '/api/processes',
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + apiKey,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(postData)
+        }
+      };
+      var req = http.request(opts, function(res) {
+        res.statusCode.should.equal(400);
+        done();
+      });
+      req.write(postData);
+      req.end();
+    });
+
+    it('GET /unknown should return 404', function(done) {
+      var opts = {
+        hostname: '127.0.0.1', port: port, path: '/unknown',
+        headers: { 'Authorization': 'Bearer ' + apiKey }
+      };
+      http.get(opts, function(res) {
+        res.statusCode.should.equal(404);
+        done();
+      });
+    });
+
+    it('DELETE /api/processes/myapp/stop should return 405', function(done) {
+      var opts = {
+        hostname: '127.0.0.1', port: port, path: '/api/processes/myapp/stop',
+        method: 'DELETE',
+        headers: { 'Authorization': 'Bearer ' + apiKey }
+      };
+      var req = http.request(opts, function(res) {
+        res.statusCode.should.equal(405);
+        done();
+      });
+      req.end();
     });
   });
 });
