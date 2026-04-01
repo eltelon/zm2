@@ -268,6 +268,25 @@ describe('HttpApi', function() {
       });
     });
 
+    it('POST /api/processes/:name/start should start process', function(done) {
+      var opts = {
+        hostname: '127.0.0.1', port: port, path: '/api/processes/testapp/start',
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + apiKey }
+      };
+      var req = http.request(opts, function(res) {
+        res.statusCode.should.equal(200);
+        var body = '';
+        res.on('data', function(chunk) { body += chunk; });
+        res.on('end', function() {
+          var data = JSON.parse(body);
+          data.success.should.be.true();
+          done();
+        });
+      });
+      req.end();
+    });
+
     it('POST /api/processes/:name/stop should stop process', function(done) {
       var opts = {
         hostname: '127.0.0.1', port: port, path: '/api/processes/testapp/stop',
