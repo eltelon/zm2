@@ -8,7 +8,7 @@ Add an HTTP server to ZM2 that serves both a Prometheus metrics endpoint and a R
 
 - **Delivery**: CLI command `zm2 api` (not a background systemd service)
 - **Single port**: Metrics and control API on the same port (default 9615)
-- **No authentication**: Trusts network-level security
+- **API key auth on API routes**: `/api/*` routes require bearer token; `/metrics` remains open
 - **No dependencies**: Uses Node's native `http` module
 - **Single file**: `lib/API/HttpApi.js` contains server, routing, and Prometheus formatting
 
@@ -88,6 +88,35 @@ zm2_process_status{name="worker",status="stopped"} 0
 zm2_process_status{name="worker",status="errored"} 0
 ```
 
+## Authentication
+
+API key auth protects all `/api/*` routes. `/metrics` remains unauthenticated so Prometheus can scrape without credentials.
+
+### API Key Management
+
+On startup, `zm2 api`:
+
+- If `~/.zm2/api-key` exists, reads and uses the existing token
+- If it does not exist, generates a 32-byte random token (hex encoded, 64 chars) using `crypto.randomBytes`, saves to `~/.zm2/api-key`
+- Always prints the token to stdout at startup so the user can copy it
+- To regenerate: delete `~/.zm2/api-key` and restart `zm2 api`
+
+### Behavior
+
+- Requests to `/api/*` must include `Authorization: Bearer <token>` header
+- Token is validated against the contents of `~/.zm2/api-key`
+- Requests without a valid token receive `401 Unauthorized`
+- Requests to `/metrics` are always allowed regardless of auth headers
+
+### 401 Response
+
+```json
+{
+  "success": false,
+  "error": "Unauthorized"
+}
+```
+
 ## JSON Response Formats
 
 ### GET /api/processes
@@ -133,6 +162,7 @@ zm2_process_status{name="worker",status="errored"} 0
 |------|------|
 | 200 | Successful GET or POST |
 | 400 | Invalid JSON body or missing required fields |
+| 401 | Missing or invalid bearer token on `/api/*` routes |
 | 404 | Unknown route or process not found |
 | 405 | Wrong HTTP method for route |
 | 500 | Internal error (systemd communication failure) |
@@ -190,6 +220,7 @@ zm2 api [--port <number>]
 ```
 
 - Default port: 9615 (configurable via `--port` flag or `ZM2_API_PORT` env var)
+- Generates API key on first run, reuses on subsequent runs (saved at `~/.zm2/api-key`)
 - Logs to stdout: `ZM2 API listening on 0.0.0.0:9615`
 - Stays in foreground (blocking command)
 - Graceful shutdown on SIGINT/SIGTERM
@@ -200,6 +231,8 @@ Unit tests in `test/programmatic/http_api.mocha.js`:
 
 - Prometheus output format validation (HELP/TYPE lines, label format, numeric values)
 - JSON response structure for each route
+- Bearer token auth enforcement: 401 on `/api/*` without valid token, 200 with valid token
+- `/metrics` accessible without auth
 - 404/405/400 error handling
 - Process name extraction from URL
 - Request body parsing and validation
