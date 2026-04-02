@@ -26,9 +26,6 @@ var csts = {
   PREFIX_MSG_WARNING      : chalk.yellow('[ZM2][WARN] '),
   PREFIX_MSG_SUCCESS      : chalk.cyan('[ZM2] '),
 
-  PM2_IO_MSG : chalk.cyan('[ZM2 I/O]'),
-  PM2_IO_MSG_ERR : chalk.red('[ZM2 I/O]'),
-
   TEMPLATE_FOLDER         : p.join(__dirname, 'lib/templates'),
 
   APP_CONF_DEFAULT_FILE   : 'ecosystem.config.js',
@@ -36,10 +33,6 @@ var csts = {
   APP_CONF_TPL_SIMPLE     : 'ecosystem-simple.tpl',
   SAMPLE_CONF_FILE        : 'sample-conf.js',
   LOGROTATE_SCRIPT        : 'logrotate.d/zm2',
-
-  DOCKERFILE_NODEJS       : 'Dockerfiles/Dockerfile-nodejs.tpl',
-  DOCKERFILE_JAVA         : 'Dockerfiles/Dockerfile-java.tpl',
-  DOCKERFILE_RUBY         : 'Dockerfiles/Dockerfile-ruby.tpl',
 
   SUCCESS_EXIT            : 0,
   ERROR_EXIT              : 1,
@@ -59,17 +52,9 @@ var csts = {
   SYSTEMD_UNIT_DIR        : '/etc/systemd/system',
   SYSTEMD_ENV_DIR         : '/etc/zm2/env',
 
-  ENABLE_GIT_PARSING      : false,
   LOW_MEMORY_ENVIRONMENT  : process.env.ZM2_OPTIMIZE_MEMORY || process.env.PM2_OPTIMIZE_MEMORY || false,
 
-  MACHINE_NAME            : process.env.INSTANCE_NAME || process.env.MACHINE_NAME || process.env.ZM2_MACHINE_NAME || process.env.PM2_MACHINE_NAME,
-  SECRET_KEY              : process.env.KEYMETRICS_SECRET || process.env.ZM2_SECRET_KEY || process.env.PM2_SECRET_KEY || process.env.SECRET_KEY,
-  PUBLIC_KEY              : process.env.KEYMETRICS_PUBLIC || process.env.ZM2_PUBLIC_KEY || process.env.PM2_PUBLIC_KEY || process.env.PUBLIC_KEY,
-  KEYMETRICS_ROOT_URL     : process.env.KEYMETRICS_NODE || process.env.ZM2_APM_ADDRESS || process.env.PM2_APM_ADDRESS || process.env.ROOT_URL || process.env.INFO_NODE || 'root.keymetrics.io',
-
-
   PM2_BANNER       : '../lib/motd',
-  PM2_UPDATE       : '../lib/API/pm2-plus/pres/motd.update',
   DEFAULT_MODULE_JSON     : 'package.json',
 
   MODULE_BASEFOLDER: 'module',
@@ -77,10 +62,6 @@ var csts = {
   MODULE_CONF_PREFIX_TAR: 'tar-modules',
 
   EXP_BACKOFF_RESET_TIMER : parseInt(process.env.EXP_BACKOFF_RESET_TIMER) || 30000,
-  REMOTE_PORT_TCP         : isNaN(parseInt(process.env.KEYMETRICS_PUSH_PORT)) ? 80 : parseInt(process.env.KEYMETRICS_PUSH_PORT),
-  REMOTE_PORT             : 41624,
-  REMOTE_HOST             : 's1.keymetrics.io',
-  SEND_INTERVAL           : 1000,
   RELOAD_LOCK_TIMEOUT     : parseInt(process.env.ZM2_RELOAD_LOCK_TIMEOUT || process.env.PM2_RELOAD_LOCK_TIMEOUT) || 30000,
   GRACEFUL_TIMEOUT        : parseInt(process.env.ZM2_GRACEFUL_TIMEOUT || process.env.PM2_GRACEFUL_TIMEOUT) || 8000,
   GRACEFUL_LISTEN_TIMEOUT : parseInt(process.env.ZM2_GRACEFUL_LISTEN_TIMEOUT || process.env.PM2_GRACEFUL_LISTEN_TIMEOUT) || 3000,

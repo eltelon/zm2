@@ -112,9 +112,12 @@ Logs: `journalctl -u zm2-api -f`
 - **No daemon** — CLI talks directly to systemd
 - **No fork/cluster mode** — all apps run as `Type=simple` systemd services
 - **No custom log files** — journald handles all logging
-- **No file watching** — removed chokidar
-- **No pm2-plus** — removed @pm2/agent, @pm2/io integration
+- **No file watching** — removed chokidar and all watch CLI options/schema entries
+- **No pm2-plus** — removed @pm2/agent, @pm2/io, Keymetrics constants, dashboard URL generation
 - **No pm2-axon/RPC** — removed socket-based communication
+- **No vizion** — git versioning via `vizion` removed; `pull`/`forward`/`backward` return error stubs
+- **No Docker mode** — removed Containerizer, Runtime4Docker, `zm2-docker`/`zm2-runtime` binaries
+- **No deep-monitoring** — removed `--v8`, `--trace`, `--deep-monitoring`, `--event-loop-inspector` options
 
 ## Code Style
 

@@ -66,7 +66,6 @@ runUnitTest $D/resurect_state.mocha.js
 runUnitTest $D/programmatic.js
 runUnitTest $D/namespace.mocha.js
 runUnitTest $D/auto_restart.mocha.js
-runUnitTest $D/containerizer.mocha.js
 runUnitTest $D/api.mocha.js
 runUnitTest $D/lazy_api.mocha.js
 #runUnitTest $D/version.mocha.js
@@ -74,7 +73,6 @@ runUnitTest $D/exp_backoff_restart_delay.mocha.js
 runUnitTest $D/api.backward.compatibility.mocha.js
 runUnitTest $D/custom_action.mocha.js
 runUnitTest $D/logs.js
-runUnitTest $D/watcher.js
 runUnitTest $D/max_memory_limit.js
 runUnitTest $D/cluster.mocha.js
 runUnitTest $D/graceful.mocha.js
@@ -88,7 +86,6 @@ runUnitTest $D/env_switching.js
 runUnitTest $D/configuration.mocha.js
 runUnitTest $D/id.mocha.js
 
-runUnitTest $D/god.mocha.js
 runUnitTest $D/dump.mocha.js
 runUnitTest $D/common.mocha.js
 
