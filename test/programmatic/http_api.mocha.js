@@ -410,4 +410,45 @@ describe('HttpApi', function() {
       req.end();
     });
   });
+
+  describe('generateUnitFile', function() {
+    it('should generate a valid systemd unit file', function() {
+      var unit = HttpApi.generateUnitFile({
+        nodePath: '/usr/bin/node',
+        scriptPath: '/opt/zm2/lib/API/HttpApiServer.js',
+        zm2Home: '/home/user/.zm2',
+        port: 9615,
+        host: '127.0.0.1'
+      });
+
+      unit.should.containEql('[Unit]');
+      unit.should.containEql('Description=ZM2 API Server');
+      unit.should.containEql('After=network.target');
+      unit.should.containEql('[Service]');
+      unit.should.containEql('Type=simple');
+      unit.should.containEql('ExecStart=/usr/bin/node /opt/zm2/lib/API/HttpApiServer.js');
+      unit.should.containEql('Environment=ZM2_HOME=/home/user/.zm2');
+      unit.should.containEql('Environment=ZM2_API_PORT=9615');
+      unit.should.containEql('Environment=ZM2_API_HOST=127.0.0.1');
+      unit.should.containEql('Restart=on-failure');
+      unit.should.containEql('RestartSec=5');
+      unit.should.containEql('TimeoutStopSec=10');
+      unit.should.containEql('[Install]');
+      unit.should.containEql('WantedBy=multi-user.target');
+    });
+
+    it('should use custom port and host', function() {
+      var unit = HttpApi.generateUnitFile({
+        nodePath: '/usr/bin/node',
+        scriptPath: '/opt/zm2/lib/API/HttpApiServer.js',
+        zm2Home: '/root/.zm2',
+        port: 8080,
+        host: '0.0.0.0'
+      });
+
+      unit.should.containEql('Environment=ZM2_API_PORT=8080');
+      unit.should.containEql('Environment=ZM2_API_HOST=0.0.0.0');
+      unit.should.containEql('Environment=ZM2_HOME=/root/.zm2');
+    });
+  });
 });
