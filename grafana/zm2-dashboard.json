@@ -100,7 +100,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "count(zm2_process_status{status=\"online\"} == 1)",
+          "expr": "count(zm2_process_status{status=\"online\", instance=~\"$instance\"} == 1)",
           "legendFormat": "Online",
           "refId": "A"
         }
@@ -137,7 +137,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "count(zm2_process_status{status=\"errored\"} == 1) OR on() vector(0)",
+          "expr": "count(zm2_process_status{status=\"errored\", instance=~\"$instance\"} == 1) OR on() vector(0)",
           "legendFormat": "Errored",
           "refId": "A"
         }
@@ -173,7 +173,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "count(zm2_process_status{status=\"stopped\"} == 1) OR on() vector(0)",
+          "expr": "count(zm2_process_status{status=\"stopped\", instance=~\"$instance\"} == 1) OR on() vector(0)",
           "legendFormat": "Stopped",
           "refId": "A"
         }
@@ -210,7 +210,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(zm2_process_memory_bytes)",
+          "expr": "sum(zm2_process_memory_bytes{instance=~\"$instance\"})",
           "legendFormat": "Total",
           "refId": "A"
         }
@@ -247,7 +247,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(zm2_process_cpu_percent)",
+          "expr": "sum(zm2_process_cpu_percent{instance=~\"$instance\"})",
           "legendFormat": "Total",
           "refId": "A"
         }
@@ -284,7 +284,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(zm2_process_restart_count)",
+          "expr": "sum(zm2_process_restart_count{instance=~\"$instance\"})",
           "legendFormat": "Total",
           "refId": "A"
         }
@@ -365,7 +365,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "zm2_process_memory_bytes",
+          "expr": "zm2_process_memory_bytes{instance=~\"$instance\"}",
           "format": "table",
           "instant": true,
           "legendFormat": "",
@@ -373,7 +373,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "zm2_process_cpu_percent",
+          "expr": "zm2_process_cpu_percent{instance=~\"$instance\"}",
           "format": "table",
           "instant": true,
           "legendFormat": "",
@@ -381,7 +381,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "zm2_process_uptime_seconds",
+          "expr": "zm2_process_uptime_seconds{instance=~\"$instance\"}",
           "format": "table",
           "instant": true,
           "legendFormat": "",
@@ -389,7 +389,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "zm2_process_restart_count",
+          "expr": "zm2_process_restart_count{instance=~\"$instance\"}",
           "format": "table",
           "instant": true,
           "legendFormat": "",
@@ -397,7 +397,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "zm2_process_status{status=\"online\"} * 1 + zm2_process_status{status=\"errored\"} * 2 + zm2_process_status{status=\"stopped\"} * 3",
+          "expr": "zm2_process_status{status=\"online\", instance=~\"$instance\"} * 1 + zm2_process_status{status=\"errored\", instance=~\"$instance\"} * 2 + zm2_process_status{status=\"stopped\", instance=~\"$instance\"} * 3",
           "format": "table",
           "instant": true,
           "legendFormat": "",
@@ -534,7 +534,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "zm2_process_memory_bytes",
+          "expr": "zm2_process_memory_bytes{instance=~\"$instance\"}",
           "legendFormat": "{{exported_name}}",
           "refId": "A"
         }
@@ -586,7 +586,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "zm2_process_memory_bytes",
+          "expr": "zm2_process_memory_bytes{instance=~\"$instance\"}",
           "legendFormat": "{{exported_name}}",
           "refId": "A"
         }
@@ -645,7 +645,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "zm2_process_cpu_percent",
+          "expr": "zm2_process_cpu_percent{instance=~\"$instance\"}",
           "legendFormat": "{{exported_name}}",
           "refId": "A"
         }
@@ -697,7 +697,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "zm2_process_cpu_percent",
+          "expr": "zm2_process_cpu_percent{instance=~\"$instance\"}",
           "legendFormat": "{{exported_name}}",
           "refId": "A"
         }
@@ -757,7 +757,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "zm2_process_restart_count",
+          "expr": "zm2_process_restart_count{instance=~\"$instance\"}",
           "legendFormat": "{{exported_name}}",
           "refId": "A"
         }
@@ -809,7 +809,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "zm2_process_uptime_seconds",
+          "expr": "zm2_process_uptime_seconds{instance=~\"$instance\"}",
           "legendFormat": "{{exported_name}}",
           "refId": "A"
         }
@@ -835,6 +835,23 @@
         "regex": "",
         "skipUrlSync": false,
         "type": "datasource"
+      },
+      {
+        "current": {},
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "definition": "label_values(zm2_process_memory_bytes, instance)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Instance",
+        "multi": true,
+        "name": "instance",
+        "options": [],
+        "query": { "query": "label_values(zm2_process_memory_bytes, instance)", "refId": "StandardVariableQuery" },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
       }
     ]
   },
