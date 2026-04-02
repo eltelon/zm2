@@ -85,13 +85,21 @@ All logging goes through **journald**. Use `zm2 logs <name>` which wraps `journa
 
 ## HTTP API & Prometheus
 
-`zm2 api [--port 9615]` starts an HTTP server with:
+`zm2 api [--port 9615] [--host 127.0.0.1]` installs and starts an HTTP API as a systemd service (`zm2-api.service`). Subcommands:
+- `zm2 api` — Install and start the service
+- `zm2 api stop` — Stop the service
+- `zm2 api restart` — Restart the service
+- `zm2 api status` — Show running state and API key
+- `zm2 api remove` — Stop and remove the service
+
+Endpoints:
 - `GET /metrics` — Prometheus metrics (no auth)
 - `GET /api/processes` — List processes (requires bearer token)
 - `POST /api/processes` — Create new process (requires bearer token, body: `{script, name?, cwd?, interpreter?, env?}`)
 - `POST /api/processes/:name/start|stop|restart` — Control process (requires bearer token)
 
-API key auto-generated on first run, stored at `~/.zm2/api-key`. Printed to stdout on startup.
+API key auto-generated on first run, stored at `~/.zm2/api-key`. Printed to stdout on `zm2 api` and `zm2 api status`.
+Logs: `journalctl -u zm2-api -f`
 
 ## Naming Convention (Fork from PM2)
 
