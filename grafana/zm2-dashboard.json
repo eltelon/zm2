@@ -651,32 +651,63 @@
       "title": "Process Status",
       "transformations": [
         {
-          "id": "joinByLabels",
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "groupBy",
           "options": {
-            "labels": "instance,exported_name"
+            "fields": {
+              "instance": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "exported_name": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "Value #A": {
+                "aggregations": ["lastNotNull"],
+                "operation": "aggregate"
+              },
+              "Value #B": {
+                "aggregations": ["lastNotNull"],
+                "operation": "aggregate"
+              },
+              "Value #C": {
+                "aggregations": ["lastNotNull"],
+                "operation": "aggregate"
+              },
+              "Value #D": {
+                "aggregations": ["lastNotNull"],
+                "operation": "aggregate"
+              },
+              "Value #E": {
+                "aggregations": ["lastNotNull"],
+                "operation": "aggregate"
+              }
+            }
           }
         },
         {
           "id": "organize",
           "options": {
-            "excludeByName": {
-              "Time": true
-            },
+            "excludeByName": {},
             "indexByName": {
               "instance": 0,
               "exported_name": 1,
-              "Value #A": 2,
-              "Value #B": 3,
-              "Value #C": 4,
-              "Value #D": 5,
-              "Value #E": 6
+              "Value #A (lastNotNull)": 2,
+              "Value #B (lastNotNull)": 3,
+              "Value #C (lastNotNull)": 4,
+              "Value #D (lastNotNull)": 5,
+              "Value #E (lastNotNull)": 6
             },
             "renameByName": {
-              "Value #A": "Memory",
-              "Value #B": "CPU %",
-              "Value #C": "Uptime",
-              "Value #D": "Restarts",
-              "Value #E": "Status",
+              "Value #A (lastNotNull)": "Memory",
+              "Value #B (lastNotNull)": "CPU %",
+              "Value #C (lastNotNull)": "Uptime",
+              "Value #D (lastNotNull)": "Restarts",
+              "Value #E (lastNotNull)": "Status",
               "exported_name": "Process",
               "instance": "Server"
             }
