@@ -26,42 +26,49 @@ describe('StateStore', function() {
     it('should create default state if file does not exist', function() {
       store.load();
       store.data.should.have.property('services');
-      store.data.should.have.property('next_id', 0);
+      store.data.should.have.property('next_id', 1);
     });
 
     it('should load existing state from file', function() {
       fs.writeFileSync(storePath, JSON.stringify({
-        services: { 'zm2-app': { pm_id: 0, name: 'app' } },
-        next_id: 1
+        services: { 'zm2-app': { pm_id: 1, name: 'app' } },
+        next_id: 2
       }));
       store.load();
       store.data.services.should.have.property('zm2-app');
-      store.data.next_id.should.equal(1);
+      store.data.next_id.should.equal(2);
     });
 
     it('should handle corrupted file gracefully', function() {
       fs.writeFileSync(storePath, 'not valid json{{{');
       store.load();
       store.data.should.have.property('services');
-      store.data.should.have.property('next_id', 0);
+      store.data.should.have.property('next_id', 1);
     });
   });
 
   describe('register', function() {
-    it('should register a new service and assign pm_id', function() {
+    it('should register a new service and assign pm_id starting at 1', function() {
       store.load();
       var pm_id = store.register('zm2-myapp', { name: 'myapp', script: '/app.js' });
-      pm_id.should.equal(0);
+      pm_id.should.equal(1);
       store.data.services['zm2-myapp'].should.have.property('name', 'myapp');
       store.data.services['zm2-myapp'].should.have.property('created_at');
+    });
+
+    it('should reserve pm_id 0 for zm2-api via explicit pm_id', function() {
+      store.load();
+      var pm_id = store.register('zm2-api', { name: 'zm2_api', script: '/api.js', pm_id: 0 });
+      pm_id.should.equal(0);
+      store.data.next_id.should.equal(1);
     });
 
     it('should increment pm_id for each registration', function() {
       store.load();
       var id1 = store.register('zm2-app1', { name: 'app1' });
       var id2 = store.register('zm2-app2', { name: 'app2' });
-      id1.should.equal(0);
-      id2.should.equal(1);
+      id1.should.equal(1);
+      id2.should.equal(2);
     });
 
     it('should update existing service and keep pm_id', function() {
@@ -125,14 +132,14 @@ describe('StateStore', function() {
     it('should find service by pm_id', function() {
       store.load();
       store.register('zm2-myapp', { name: 'myapp' });
-      var entry = store.getByPmId(0);
+      var entry = store.getByPmId(1);
       entry.should.have.property('serviceName', 'zm2-myapp');
     });
 
     it('should handle string pm_id', function() {
       store.load();
       store.register('zm2-myapp', { name: 'myapp' });
-      var entry = store.getByPmId('0');
+      var entry = store.getByPmId('1');
       entry.should.have.property('serviceName', 'zm2-myapp');
     });
 
@@ -173,7 +180,7 @@ describe('StateStore', function() {
       store.register('zm2-app1', { name: 'app1' });
       store.clear();
       store.count().should.equal(0);
-      store.data.next_id.should.equal(0);
+      store.data.next_id.should.equal(1);
     });
   });
 });
