@@ -641,7 +641,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "zm2_process_status{status=\"online\", instance=~\"$instance\", exported_name=~\"$process\"} * 1 + zm2_process_status{status=\"errored\", instance=~\"$instance\", exported_name=~\"$process\"} * 2 + zm2_process_status{status=\"stopped\", instance=~\"$instance\", exported_name=~\"$process\"} * 3",
+          "expr": "zm2_process_status{instance=~\"$instance\", exported_name=~\"$process\"} == 1",
           "format": "table",
           "instant": true,
           "legendFormat": "",
@@ -685,6 +685,10 @@
               "Value #E": {
                 "aggregations": ["lastNotNull"],
                 "operation": "aggregate"
+              },
+              "status": {
+                "aggregations": [],
+                "operation": "groupby"
               }
             }
           }
@@ -700,16 +704,16 @@
               "Value #B (lastNotNull)": 3,
               "Value #C (lastNotNull)": 4,
               "Value #D (lastNotNull)": 5,
-              "Value #E (lastNotNull)": 6
+              "status": 6
             },
             "renameByName": {
               "Value #A (lastNotNull)": "Memory",
               "Value #B (lastNotNull)": "CPU %",
               "Value #C (lastNotNull)": "Uptime",
               "Value #D (lastNotNull)": "Restarts",
-              "Value #E (lastNotNull)": "Status",
               "exported_name": "Process",
-              "instance": "Server"
+              "instance": "Server",
+              "status": "Status"
             }
           }
         },
