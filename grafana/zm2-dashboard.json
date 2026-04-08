@@ -651,19 +651,16 @@
       "title": "Process Status",
       "transformations": [
         {
-          "id": "merge",
-          "options": {}
+          "id": "joinByLabels",
+          "options": {
+            "labels": "instance,exported_name"
+          }
         },
         {
           "id": "organize",
           "options": {
             "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "job": true,
-              "name": true,
-              "status": true,
-              "type": true
+              "Time": true
             },
             "indexByName": {
               "instance": 0,
@@ -695,16 +692,6 @@
               }
             ],
             "fields": {}
-          }
-        },
-        {
-          "id": "calculateField",
-          "options": {
-            "mode": "reduceRow",
-            "reduce": {
-              "reducer": "last"
-            },
-            "replaceFields": false
           }
         }
       ],
