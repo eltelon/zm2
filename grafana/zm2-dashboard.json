@@ -531,30 +531,20 @@
                 "value": [
                   {
                     "options": {
-                      "online": {
+                      "1": {
                         "color": "green",
                         "index": 0,
                         "text": "online"
-                      }
-                    },
-                    "type": "value"
-                  },
-                  {
-                    "options": {
-                      "stopped": {
-                        "color": "blue",
-                        "index": 1,
-                        "text": "stopped"
-                      }
-                    },
-                    "type": "value"
-                  },
-                  {
-                    "options": {
-                      "errored": {
+                      },
+                      "2": {
                         "color": "red",
-                        "index": 2,
+                        "index": 1,
                         "text": "errored"
+                      },
+                      "3": {
+                        "color": "blue",
+                        "index": 2,
+                        "text": "stopped"
                       }
                     },
                     "type": "value"
@@ -641,7 +631,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "zm2_process_status{instance=~\"$instance\", exported_name=~\"$process\"} == 1",
+          "expr": "zm2_process_status{status=\"online\", instance=~\"$instance\", exported_name=~\"$process\"} * 1 + zm2_process_status{status=\"errored\", instance=~\"$instance\", exported_name=~\"$process\"} * 2 + zm2_process_status{status=\"stopped\", instance=~\"$instance\", exported_name=~\"$process\"} * 3",
           "format": "table",
           "instant": true,
           "legendFormat": "",
@@ -685,10 +675,6 @@
               "Value #E": {
                 "aggregations": ["lastNotNull"],
                 "operation": "aggregate"
-              },
-              "status": {
-                "aggregations": [],
-                "operation": "groupby"
               }
             }
           }
@@ -704,16 +690,16 @@
               "Value #B (lastNotNull)": 3,
               "Value #C (lastNotNull)": 4,
               "Value #D (lastNotNull)": 5,
-              "status": 6
+              "Value #E (lastNotNull)": 6
             },
             "renameByName": {
               "Value #A (lastNotNull)": "Memory",
               "Value #B (lastNotNull)": "CPU %",
               "Value #C (lastNotNull)": "Uptime",
               "Value #D (lastNotNull)": "Restarts",
+              "Value #E (lastNotNull)": "Status",
               "exported_name": "Process",
-              "instance": "Server",
-              "status": "Status"
+              "instance": "Server"
             }
           }
         },
