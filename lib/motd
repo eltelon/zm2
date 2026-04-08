@@ -1,28 +1,25 @@
 
                         -------------
 
- ________  ___      ___   ________
-|\_____  \|\  \    /  /| |\_____  \
- \|___/  /\ \  \  /  / /  \|___/  /
-     /  / /\ \  \/  / /       /  / /
-    /  /_/__\ \    / /       /  /_/__
-   |\________\ \__/ /      |\________\
-    \|_______|\|__|/        \|_______|
+ ________  _____ ______     _______
+|\_____  \|\   _ \  _   \  /  ___  \
+ \|___/  /\ \  \\\__\ \  \/__/|_/  /|
+     /  / /\ \  \\|__| \  \__|//  / /
+    /  /_/__\ \  \    \ \  \  /  /_/__
+   |\________\ \__\    \ \__\|\________\
+    \|_______|\|__|     \|__| \|_______|
 
 
                           Runtime Edition
 
         ZM2 is a Production Process Manager for Node.js applications
-                     with a built-in Load Balancer.
+                      powered by systemd on Linux.
 
-                Start and Daemonize any application:
+                Start and manage any application:
                 $ zm2 start app.js
 
-                Load Balance 4 instances of api.js:
-                $ zm2 start api.js -i 4
-
-                Monitor in production:
-                $ zm2 monitor
+                Check running services:
+                $ zm2 status
 
                 Make zm2 auto-boot at server restart:
                 $ zm2 startup
