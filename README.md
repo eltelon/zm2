@@ -27,7 +27,7 @@ $ zm2 start app.js
 ## Installing ZM2
 
 ```bash
-$ npm install -g github:eltelon/pm2#zm2
+$ npm install -g github:eltelon/zm2#zm2
 ```
 
 ## Quick Start
