@@ -1,4 +1,9 @@
 
+## Unreleased
+
+- Allow `systemctl` commands up to 120 seconds instead of 30, preventing `zm2 start` from aborting while slow systemd generators run during `daemon-reload` or `enable`.
+- Add a real-systemd CLI regression covering successful service startup after a reload exceeding 30 seconds.
+
 ## 6.0.14
 
 - Fixed version of @pm2/pm2-version-check #6055

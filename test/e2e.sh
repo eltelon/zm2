@@ -12,6 +12,7 @@ touch e2e_time
 > e2e_time
 
 # CLI
+runTest ./test/e2e/cli/slow-daemon-reload.sh
 runTest ./test/e2e/cli/reload.sh
 runTest ./test/e2e/cli/start-app.sh
 runTest ./test/e2e/cli/operate-regex.sh
