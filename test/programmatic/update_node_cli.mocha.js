@@ -112,6 +112,7 @@ describe('update-node API extension', function() {
     api = new API();
     api.Client = { stateStore: { marker: 'store' } };
     api.pm2_home = '/tmp/zm2-update-node-home';
+    api._pm2HomeExplicit = false;
     api.exitCli = function(code) {
       calls.exit.push(code);
       calls.exitOutput = calls.output.slice();
@@ -150,7 +151,7 @@ describe('update-node API extension', function() {
     });
   }
 
-  it('passes the client state store and ZM2 home to the updater', function() {
+  it('passes the client state store, ZM2 home and home provenance to the updater', function() {
     var report = makeReport();
     var FakeUpdater = installUpdater(function() {
       return Promise.resolve(report);
@@ -160,7 +161,80 @@ describe('update-node API extension', function() {
       assert.strictEqual(FakeUpdater.options.length, 1);
       assert.strictEqual(FakeUpdater.options[0].stateStore, api.Client.stateStore);
       assert.strictEqual(FakeUpdater.options[0].pm2Home, api.pm2_home);
+      assert.strictEqual(FakeUpdater.options[0].pm2HomeExplicit, false);
       assert.deepStrictEqual(calls.runVersions, ['26.12.1']);
+    });
+  });
+
+  it('forwards explicit home provenance to the updater', function() {
+    var report = makeReport();
+    var FakeUpdater = installUpdater(function() {
+      return Promise.resolve(report);
+    });
+    api._pm2HomeExplicit = true;
+
+    return invokeWithCallback('26.12.1').then(flush).then(function() {
+      assert.strictEqual(FakeUpdater.options.length, 1);
+      assert.strictEqual(FakeUpdater.options[0].pm2HomeExplicit, true);
+    });
+  });
+
+  it('lets the real sudo guard refuse a guessed API home before StateStore load', function() {
+    var RealUpdater = require('../../lib/Systemd/NodeRuntimeUpdater');
+    var captured = null;
+    var loadCalls = 0;
+    var stateStore = {
+      filePath: '/root/.zm2/state.json',
+      load: function() {
+        loadCalls += 1;
+        return this;
+      },
+      getAll: function() { return []; },
+      register: function() {}
+    };
+    var nvm = {
+      validateVersion: function(version) { return version; },
+      prepare: function() { throw new Error('nvm.prepare must not run'); }
+    };
+    var systemd = {
+      isSystemd: function() { return true; }
+    };
+
+    updaterClass = function(options) {
+      captured = options;
+      var real = new RealUpdater({
+        stateStore: options.stateStore,
+        pm2Home: options.pm2Home,
+        pm2HomeExplicit: options.pm2HomeExplicit,
+        platform: 'linux',
+        isSystemd: true,
+        env: {
+          NVM_DIR: '/home/deploy/.nvm',
+          HOME: '/home/deploy',
+          SUDO_USER: 'deploy'
+        },
+        effectiveUser: 'root',
+        nvm: nvm,
+        systemd: systemd
+      });
+      this.run = function(version) {
+        return real.run(version);
+      };
+    };
+
+    api.Client = { stateStore: stateStore };
+    api.pm2_home = '/root/.zm2';
+    api._pm2HomeExplicit = false;
+
+    return invokeWithCallback('20.11.1').then(flush).then(function() {
+      assert.ok(captured);
+      assert.strictEqual(captured.pm2Home, '/root/.zm2');
+      assert.strictEqual(captured.pm2HomeExplicit, false);
+      assert.strictEqual(loadCalls, 0);
+      assert.strictEqual(calls.callbacks.length, 1);
+      assert.ok(calls.callbacks[0].err instanceof Error);
+      assert.match(calls.callbacks[0].report.globalError, /sudo|ZM2_HOME|pm2Home/i);
+      assert.strictEqual(calls.callbacks[0].report.exitCode, 1);
     });
   });
 
@@ -632,6 +706,37 @@ describe('update-node CLI and public declarations', function() {
     });
   }
 
+  function runApiProvenance(opts, envOverrides) {
+    var script = [
+      "process.env.ZM2_PROGRAMMATIC = 'true';",
+      "var API = require('./lib/API.js');",
+      "var api = new API(" + JSON.stringify(opts || {}) + ");",
+      "console.log('PROVENANCE:' + JSON.stringify({ flag: api._pm2HomeExplicit === true, home: api.pm2_home }));"
+    ].join('\n');
+    var env = Object.assign({}, process.env);
+    delete env.ZM2_HOME;
+    delete env.PM2_HOME;
+    delete env.OVER_HOME;
+    Object.keys(envOverrides || {}).forEach(function(key) {
+      if (envOverrides[key] === undefined) delete env[key];
+      else env[key] = envOverrides[key];
+    });
+    env.ZM2_PROGRAMMATIC = 'true';
+
+    var result = childProcess.spawnSync(process.execPath, ['-e', script], {
+      cwd: ROOT,
+      env: env,
+      encoding: 'utf8',
+      timeout: 10000
+    });
+    assert.strictEqual(result.status, 0, result.stderr || String(result.error));
+    var lines = result.stdout.split('\n').filter(function(line) {
+      return line.indexOf('PROVENANCE:') === 0;
+    });
+    assert.strictEqual(lines.length, 1, result.stdout);
+    return JSON.parse(lines[0].slice('PROVENANCE:'.length));
+  }
+
   function updateMarkers(result) {
     return result.stdout.split('\n').filter(function(line) {
       return line.indexOf('UPDATE:') === 0;
@@ -639,6 +744,66 @@ describe('update-node CLI and public declarations', function() {
       return JSON.parse(line.slice('UPDATE:'.length));
     });
   }
+
+  it('records explicit provenance for ZM2_HOME, PM2_HOME and programmatic homes', function() {
+    var envHome = path.join(home, 'env-home');
+    var pm2EnvHome = path.join(home, 'pm2-env-home');
+    var guessedHome = path.join(home, 'guessed-home');
+    var explicitHome = path.join(home, 'explicit-home');
+    var explicitEnvHome = path.join(home, 'explicit-env-home');
+    fs.mkdirSync(envHome, { recursive: true });
+    fs.mkdirSync(pm2EnvHome, { recursive: true });
+    fs.mkdirSync(guessedHome, { recursive: true });
+    fs.mkdirSync(explicitEnvHome, { recursive: true });
+
+    var byZm2Home = runApiProvenance({}, { HOME: guessedHome, ZM2_HOME: envHome });
+    assert.deepStrictEqual(byZm2Home, { flag: true, home: envHome });
+    assert.strictEqual(fs.existsSync(path.join(guessedHome, '.zm2')), false);
+
+    var byPm2Home = runApiProvenance({}, { HOME: guessedHome, PM2_HOME: pm2EnvHome });
+    assert.deepStrictEqual(byPm2Home, { flag: true, home: pm2EnvHome });
+    assert.strictEqual(fs.existsSync(path.join(guessedHome, '.zm2')), false);
+
+    var guessed = runApiProvenance({}, { HOME: guessedHome });
+    assert.deepStrictEqual(guessed, {
+      flag: false,
+      home: path.join(guessedHome, '.zm2')
+    });
+
+    var explicit = runApiProvenance(
+      { pm2_home: explicitHome },
+      { HOME: guessedHome, ZM2_HOME: explicitEnvHome }
+    );
+    assert.deepStrictEqual(explicit, { flag: true, home: explicitHome });
+    assert.strictEqual(fs.existsSync(path.join(explicitEnvHome, 'module_conf.json')), false);
+  });
+
+  it('records independent instances as non-explicit even with ZM2_HOME set', function() {
+    var envHome = path.join(home, 'independent-env-home');
+    var guessedHome = path.join(home, 'independent-guessed-home');
+    fs.mkdirSync(envHome, { recursive: true });
+    fs.mkdirSync(guessedHome, { recursive: true });
+
+    var independent = runApiProvenance(
+      { independent: true },
+      { HOME: guessedHome, ZM2_HOME: envHome }
+    );
+
+    try {
+      assert.strictEqual(independent.flag, false);
+      assert.notStrictEqual(independent.home, envHome);
+      assert.strictEqual(path.dirname(independent.home), '/tmp');
+      assert.match(path.basename(independent.home), /^[0-9a-f]{16}$/);
+      assert.strictEqual(fs.existsSync(path.join(envHome, 'module_conf.json')), false);
+      assert.strictEqual(fs.existsSync(path.join(guessedHome, '.zm2')), false);
+    } finally {
+      try {
+        fs.rmSync(independent.home, { recursive: true, force: true });
+      } catch (e) {
+        /* ignore cleanup errors */
+      }
+    }
+  });
 
   it('parses an exact version and passes it to the API once', function() {
     var result = runCli(['update-node', '26.12.1']);
