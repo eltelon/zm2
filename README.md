@@ -96,8 +96,10 @@ $ zm2 logs                  # Stream all zm2 logs
 $ zm2 logs app-name         # Stream logs for one app
 $ zm2 logs --json           # JSON output
 $ zm2 logs --format         # key=value output
-$ zm2 logs --lines 200      # Last N lines
-$ zm2 logs --nostream       # Print last lines without streaming
+$ zm2 logs app-name --lines 200             # Last 200 lines, then stream new logs
+$ zm2 logs app-name --lines 200 --nostream  # Print last 200 lines and exit
+$ zm2 logs app-name --lines 0               # Stream only new logs
+$ zm2 logs --nostream       # Print last 15 lines per service without streaming
 $ zm2 logs --err | --out    # Only error / only stdout
 ```
 

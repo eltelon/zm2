@@ -54,6 +54,8 @@ touch unit_time
 
 D=test/programmatic
 
+runUnitTest $D/systemd_logs.mocha.js
+
 # Abort script at first error
 #set -e
 
