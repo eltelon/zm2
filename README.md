@@ -278,10 +278,70 @@ $ pm2 kill                  # Stop old PM2 daemon
 $ pm2 unstartup             # Remove old PM2 startup hook
 ```
 
+## Updating Node.js Runtimes
+
+`zm2 update-node` moves registered Node.js applications to another Node.js runtime installed through nvm:
+
+```bash
+$ zm2 update-node <version>
+```
+
+The version must be an exact `major.minor.patch`, optionally prefixed with `v` (for example `22.14.0` or `v22.14.0`). Aliases such as `lts` or `node` and semver ranges are rejected. If the requested version is missing, ZM2 installs it with nvm.
+
+### Selecting nvm and the ZM2 home
+
+ZM2 uses one nvm installation: `NVM_DIR` when set, otherwise `$HOME/.nvm`. nvm is never installed automatically, the nvm default alias is never changed, and previous Node.js runtimes are never deleted.
+
+Updating units under `/etc/systemd/system`, environment files under `/etc/zm2/env` and controlling services requires root. On systems where `sudo` uses a restricted `secure_path`, an nvm-installed `zm2` and its `#!/usr/bin/env node` shebang may not resolve. Invoke the current Node.js and `zm2` script by absolute path through `env`, while passing both locations explicitly:
+
+```bash
+$ sudo env NVM_DIR="$NVM_DIR" ZM2_HOME="$HOME/.zm2" "$(command -v node)" "$(command -v zm2)" update-node 22.14.0
+```
+
+Both `command -v` substitutions and the environment values are expanded by your shell before `sudo` runs, so `sudo` executes the operator's current Node.js directly on the selected `zm2` script without copying the entire `PATH` into root's environment or relying on root's Node.js. Run this from a shell where `NVM_DIR` points to your nvm installation (nvm sets it when sourced), and make sure `ZM2_HOME` is the existing state home where the applications were registered. ZM2 does not infer another user or home and does not run `sudo` internally.
+
+The command sources `nvm.sh` from the selected directory as the privileged user. Only point `NVM_DIR` at an nvm installation you trust: sourcing it executes shell code with the privileges of the command.
+
+### What gets updated
+
+- Only applications registered in the selected ZM2 state are considered. The internal ZM2 HTTP API service is excluded.
+- Applications whose `ExecStart` runs a Node.js executable are updated. Only the absolute executable path in `ExecStart` is replaced, and the runtime's `bin` directory is prepended to the application `PATH` in its environment file. Other unit directives are preserved.
+- Shell or npm wrappers and non-Node interpreters (Python, Bun, ...) are skipped; ZM2 does not reinterpret their commands.
+- Applications are processed sequentially. Stopped applications receive the new configuration but are not started. A multi-instance application is updated as one unit and rolled back as a whole.
+- The nvm default alias, previous Node.js runtimes, ecosystem files, global npm packages and lockfiles are not modified. `npm rebuild` is not run.
+
+Each restarted instance must remain `active/running`, keep a valid main PID, run the selected Node.js executable and accumulate no systemd restarts during a 5-second observation window. This detects early startup failures only: it is not an HTTP, database or functional health check. Expect downtime while instances restart; updates are not zero-downtime.
+
+### Results
+
+Every registered application is reported with its previous version, the requested version and a result:
+
+```text
+Service          Previous  Requested  Result
+zm2-gateway      20.19.0   22.14.0    updated
+zm2-worker       20.19.0   22.14.0    failed (restored to 20.19.0)
+zm2-scheduler    20.19.0   22.14.0    updated (remains stopped)
+zm2-python       —         —          skipped: non-Node interpreter
+```
+
+Possible results are `updated`, `updated (remains stopped)`, `skipped` with a reason, `failed (unchanged)`, `failed (restored)`, `failed (restoration failed)` and `not updated (global failure)`. Skipped rows include the reason; failed and not-updated rows include the error detail and any rollback errors. The report ends with totals for updated, skipped, failed and not updated applications.
+
+On a per-application failure ZM2 restores only that application's files and metadata, recovers the instances that were previously running and continues with the next application. The exit code is `1` if any application failed or was not updated, even when a rollback recovered the service. It is `0` only when there were no global errors and all eligible applications were updated, already current, or intentionally skipped.
+
+To diagnose a failed update or an incomplete restoration:
+
+```bash
+$ journalctl -u zm2-worker -n 100 --no-pager
+$ journalctl -u zm2-worker -f
+```
+
+Native addons built for the previous Node.js version may need to be rebuilt against the new ABI; `zm2 update-node` does not rebuild them or migrate global npm packages. There is no transactional recovery if the command is interrupted abruptly or if applications are changed concurrently by another administrator.
+
 ## Other Commands
 
 ```bash
 $ zm2 serve [path] [port]             # Static file server
+$ zm2 update-node <version>           # Update Node.js runtime of registered apps
 $ zm2 deploy <file>                   # Deploy via pm2-deploy (ecosystem.config.js)
 $ zm2 install <module>                # Install a module (NPM/tarball/git)
 $ zm2 uninstall <module>              # Remove a module
