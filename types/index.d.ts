@@ -194,6 +194,16 @@ export function env(app_id: string | number, errback?: ErrCallback): void;
 export function getPID(app_name?: string, errback?: ErrProcCallback): void;
 
 /**
+ * Update the Node.js runtime of all registered applications via nvm.
+ * Without a callback this method has CLI semantics: it prints the warning and
+ * final report, then exits the process. With a callback it never prints or
+ * exits and calls the callback exactly once with (error|null, report).
+ * @param version - Exact major.minor.patch version, optionally prefixed with v
+ * @param errback - Called with an error when exitCode is 1 and the full report
+ */
+export function updateNode(version: string, errback?: UpdateNodeCallback): void;
+
+/**
  * Trigger a custom action on a process
  * @param pm_id - Process id
  * @param action_name - Name of the action to trigger
@@ -637,6 +647,53 @@ export interface DockerOptions {
 }
 
 /**
+ * Prepared Node.js runtime used by updateNode.
+ */
+export interface UpdateNodeRuntime {
+  version: string;
+  executable: string;
+  binDir: string;
+}
+
+/**
+ * Per-application update-node result.
+ */
+export interface UpdateNodeResult {
+  serviceName: string;
+  name: string;
+  previousVersion: string | null;
+  status: 'updated' | 'skipped' | 'failed_unchanged' | 'failed_restored' |
+    'failed_restore' | 'not_updated';
+  stopped: boolean;
+  startupVerified: boolean;
+  reason: string | null;
+  errors: string[];
+  rollbackErrors: string[];
+}
+
+/**
+ * Aggregate update-node result counts.
+ */
+export interface UpdateNodeTotals {
+  updated: number;
+  skipped: number;
+  failed: number;
+  notUpdated: number;
+}
+
+/**
+ * Complete update-node report returned by the API and printed by the CLI.
+ */
+export interface UpdateNodeReport {
+  requestedVersion: string;
+  runtime: UpdateNodeRuntime | null;
+  globalError: string | null;
+  results: UpdateNodeResult[];
+  totals: UpdateNodeTotals;
+  exitCode: 0 | 1;
+}
+
+/**
  * Options for module installation
  */
 export interface InstallOptions {
@@ -673,3 +730,4 @@ type ErrProcDescCallback = (err: Error, processDescription: ProcessDescription) 
 type ErrProcDescsCallback = (err: Error, processDescriptionList: ProcessDescription[]) => void;
 type ErrResultCallback = (err: Error, result: any) => void;
 type ErrBusCallback = (err: Error, bus: any) => void;
+type UpdateNodeCallback = (err: Error | null, report: UpdateNodeReport) => void;

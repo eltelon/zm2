@@ -5,6 +5,28 @@ var path = require('path');
 var os = require('os');
 var StateStore = require('../../lib/Systemd/StateStore');
 
+function withFsMethod(name, replacement, fn) {
+  var original = fs[name];
+  fs[name] = replacement;
+  try {
+    return fn();
+  } finally {
+    fs[name] = original;
+  }
+}
+
+function tempFiles(dir) {
+  return fs.readdirSync(dir).filter(function(name) {
+    return /\.tmp$/.test(name);
+  });
+}
+
+function fsError(code) {
+  var err = new Error(code + ': simulated failure');
+  err.code = code;
+  return err;
+}
+
 describe('StateStore', function() {
   var tmpDir;
   var storePath;
@@ -44,6 +66,173 @@ describe('StateStore', function() {
       store.load();
       store.data.should.have.property('services');
       store.data.should.have.property('next_id', 1);
+    });
+
+    it('should create default state for a missing file in strict mode', function() {
+      store.load({ strict: true });
+      store.data.should.eql({ services: {}, next_id: 1 });
+    });
+
+    it('should load a valid state unchanged in strict mode', function() {
+      var state = {
+        services: {
+          'zm2-app': { pm_id: 1, name: 'app', script: '/app.js' },
+          'zm2-api': { pm_id: 0, name: 'zm2_api', script: '/api.js' }
+        },
+        next_id: 2
+      };
+      fs.writeFileSync(storePath, JSON.stringify(state));
+      store.load({ strict: true });
+      store.data.should.eql(state);
+    });
+
+    it('should throw on corrupted JSON in strict mode', function() {
+      fs.writeFileSync(storePath, 'not valid json{{{');
+      (function() {
+        store.load({ strict: true });
+      }).should.throw();
+    });
+
+    it('should throw on read errors in strict mode', function() {
+      var denied = fsError('EACCES');
+      withFsMethod('readFileSync', function() { throw denied; }, function() {
+        var thrown;
+        try {
+          store.load({ strict: true });
+        } catch (e) {
+          thrown = e;
+        }
+        should(thrown).equal(denied);
+      });
+    });
+
+    it('should keep tolerant read errors as an empty state', function() {
+      withFsMethod('readFileSync', function() { throw fsError('EACCES'); }, function() {
+        store.load();
+      });
+      store.data.should.eql({ services: {}, next_id: 1 });
+    });
+
+    it('should reject a non-object state or services in strict mode', function() {
+      [
+        { services: null, next_id: 1 },
+        { services: [], next_id: 1 },
+        { services: 'invalid', next_id: 1 },
+        [],
+        null
+      ].forEach(function(state) {
+        fs.writeFileSync(storePath, JSON.stringify(state));
+        (function() {
+          store.load({ strict: true });
+        }).should.throw(/Invalid state/);
+      });
+    });
+
+    it('should reject non-object service metadata in strict mode', function() {
+      [
+        { services: { 'zm2-app': null }, next_id: 1 },
+        { services: { 'zm2-app': [] }, next_id: 1 },
+        { services: { 'zm2-app': 'metadata' }, next_id: 1 }
+      ].forEach(function(state) {
+        fs.writeFileSync(storePath, JSON.stringify(state));
+        (function() {
+          store.load({ strict: true });
+        }).should.throw(/Invalid state/);
+      });
+    });
+
+    it('should reject malformed IDs in strict mode', function() {
+      [
+        { services: {}, next_id: 0 },
+        { services: {}, next_id: -1 },
+        { services: {}, next_id: 1.5 },
+        { services: {}, next_id: '2' },
+        { services: {} },
+        { services: { 'zm2-app': { pm_id: -1 } }, next_id: 1 },
+        { services: { 'zm2-app': { pm_id: 1.5 } }, next_id: 1 },
+        { services: { 'zm2-app': { pm_id: '1' } }, next_id: 1 },
+        { services: { 'zm2-app': { name: 'app' } }, next_id: 1 }
+      ].forEach(function(state) {
+        fs.writeFileSync(storePath, JSON.stringify(state));
+        (function() {
+          store.load({ strict: true });
+        }).should.throw(/Invalid state/);
+      });
+    });
+  });
+
+  describe('save', function() {
+    it('should write through an exclusive temporary file in the same directory', function() {
+      fs.writeFileSync(storePath, JSON.stringify({ services: {}, next_id: 1 }));
+      store.load();
+      var opened = [];
+      var originalOpenSync = fs.openSync;
+      withFsMethod('openSync', function(filePath, flags) {
+        opened.push({ filePath: filePath, flags: flags });
+        return originalOpenSync.apply(fs, arguments);
+      }, function() {
+        store.save();
+      });
+
+      opened.length.should.equal(1);
+      path.dirname(opened[0].filePath).should.equal(tmpDir);
+      opened[0].flags.should.equal('wx');
+    });
+
+    it('should not truncate the previous file and should remove the temp file when rename fails', function() {
+      var state = { services: { 'zm2-app': { pm_id: 1, name: 'app' } }, next_id: 2 };
+      fs.writeFileSync(storePath, JSON.stringify(state, null, 2));
+      store.load();
+      var before = fs.readFileSync(storePath, 'utf8');
+
+      withFsMethod('renameSync', function() { throw fsError('EIO'); }, function() {
+        (function() {
+          store.save();
+        }).should.throw(/EIO/);
+      });
+
+      fs.readFileSync(storePath, 'utf8').should.equal(before);
+      tempFiles(tmpDir).length.should.equal(0);
+    });
+
+    it('should remove the temp file when writing fails', function() {
+      var state = { services: {}, next_id: 1 };
+      fs.writeFileSync(storePath, JSON.stringify(state, null, 2));
+      store.load();
+      var before = fs.readFileSync(storePath, 'utf8');
+      var opened = null;
+      var originalOpenSync = fs.openSync;
+
+      withFsMethod('openSync', function(filePath, flags) {
+        opened = filePath;
+        return originalOpenSync.apply(fs, arguments);
+      }, function() {
+        withFsMethod('writeFileSync', function() { throw fsError('ENOSPC'); }, function() {
+          (function() {
+            store.save();
+          }).should.throw(/ENOSPC/);
+        });
+      });
+
+      should(opened).be.a.String();
+      fs.existsSync(opened).should.be.false();
+      fs.readFileSync(storePath, 'utf8').should.equal(before);
+      tempFiles(tmpDir).length.should.equal(0);
+    });
+
+    it('should preserve the existing file mode, uid and gid', function() {
+      fs.writeFileSync(storePath, JSON.stringify({ services: {}, next_id: 1 }));
+      fs.chmodSync(storePath, 0o640);
+      var before = fs.statSync(storePath);
+
+      store.load();
+      store.register('zm2-app', { name: 'app' });
+
+      var after = fs.statSync(storePath);
+      (after.mode & 0o777).should.equal(0o640);
+      after.uid.should.equal(before.uid);
+      after.gid.should.equal(before.gid);
+      tempFiles(tmpDir).length.should.equal(0);
     });
   });
 
@@ -87,6 +276,93 @@ describe('StateStore', function() {
       var store2 = new StateStore(storePath);
       store2.load();
       store2.data.services.should.have.property('zm2-myapp');
+    });
+  });
+
+  describe('replace', function() {
+    var initialState;
+
+    beforeEach(function() {
+      initialState = {
+        services: {
+          'zm2-app': {
+            pm_id: 3,
+            name: 'app',
+            script: '/old.js',
+            exec_interpreter: '/old/node',
+            created_at: 111,
+            updated_at: 222,
+            extra: 'remove-me'
+          },
+          'zm2-other': {
+            pm_id: 1,
+            name: 'other',
+            script: '/other.js',
+            created_at: 100,
+            updated_at: 100
+          }
+        },
+        next_id: 4
+      };
+      fs.writeFileSync(storePath, JSON.stringify(initialState, null, 2));
+      store.load();
+    });
+
+    it('should replace an existing entry exactly without merging or touching other entries', function() {
+      var replacement = {
+        pm_id: 3,
+        name: 'app',
+        script: '/old.js',
+        exec_interpreter: '/old/node',
+        created_at: 111,
+        updated_at: 222
+      };
+
+      store.replace('zm2-app', replacement).should.equal(store);
+
+      store.get('zm2-app').should.eql(replacement);
+      should(store.get('zm2-app').extra).be.undefined();
+      store.get('zm2-other').should.eql(initialState.services['zm2-other']);
+      store.data.next_id.should.equal(4);
+
+      var onDisk = JSON.parse(fs.readFileSync(storePath, 'utf8'));
+      onDisk.should.eql(store.data);
+      onDisk.services['zm2-app'].should.eql(replacement);
+      should(onDisk.services['zm2-app'].extra).be.undefined();
+    });
+
+    it('should reject replacing a missing service without changing memory or disk', function() {
+      var before = fs.readFileSync(storePath, 'utf8');
+      var beforeMemory = JSON.parse(JSON.stringify(store.data));
+
+      (function() {
+        store.replace('zm2-missing', { pm_id: 9, name: 'missing' });
+      }).should.throw(/missing/i);
+
+      store.data.should.eql(beforeMemory);
+      fs.readFileSync(storePath, 'utf8').should.equal(before);
+    });
+
+    it('should keep memory consistent with the previous disk state when saving fails', function() {
+      var before = fs.readFileSync(storePath, 'utf8');
+      var beforeMemory = JSON.parse(JSON.stringify(store.data));
+
+      withFsMethod('renameSync', function() { throw fsError('EIO'); }, function() {
+        (function() {
+          store.replace('zm2-app', {
+            pm_id: 3,
+            name: 'app',
+            script: '/new.js',
+            exec_interpreter: '/new/node',
+            created_at: 111,
+            updated_at: 222
+          });
+        }).should.throw(/EIO/);
+      });
+
+      store.data.should.eql(beforeMemory);
+      fs.readFileSync(storePath, 'utf8').should.equal(before);
+      tempFiles(tmpDir).length.should.equal(0);
     });
   });
 
