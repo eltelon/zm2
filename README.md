@@ -337,6 +337,21 @@ $ journalctl -u zm2-worker -f
 
 Native addons built for the previous Node.js version may need to be rebuilt against the new ABI; `zm2 update-node` does not rebuild them or migrate global npm packages. There is no transactional recovery if the command is interrupted abruptly or if applications are changed concurrently by another administrator.
 
+### Linux integration test
+
+Run the opt-in test **only on a disposable Linux host with systemd**, from the repository root. It creates real system services and may install the target runtime. Use a trusted existing nvm with the old version already installed, and choose two distinct, real versions:
+
+```bash
+$ export NVM_DIR=/home/test/.nvm
+$ export ZM2_NODE_OLD=20.19.0 ZM2_NODE_TARGET=22.14.0
+$ export ZM2_HOME="$(mktemp -d /tmp/zm2-update-node-e2e.XXXXXX)"
+$ sudo env ZM2_UPDATE_NODE_E2E=1 NVM_DIR="$NVM_DIR" ZM2_HOME="$ZM2_HOME" \
+    ZM2_NODE_OLD="$ZM2_NODE_OLD" ZM2_NODE_TARGET="$ZM2_NODE_TARGET" \
+    bash test/e2e/systemd/update-node.sh
+```
+
+`ZM2_HOME` must be an existing empty test directory, never the home containing real applications. The script creates a nested temporary home and cleans up only its own services and nested files; the outer directory remains. It refuses collisions with existing test services. The CLI runtime must be Node.js 16 or newer; `nvm.sh` must not be group/world-writable. Real systemd integration cannot be validated on macOS; unit tests use simulated dependencies instead.
+
 ## Other Commands
 
 ```bash
