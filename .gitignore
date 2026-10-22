@@ -1,4 +1,5 @@
 /node_modules
+/.worktrees/
 *.log
 *.pid
 test/child
