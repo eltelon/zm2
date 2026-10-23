@@ -162,7 +162,51 @@ describe('update-node API extension', function() {
       assert.strictEqual(FakeUpdater.options[0].stateStore, api.Client.stateStore);
       assert.strictEqual(FakeUpdater.options[0].pm2Home, api.pm2_home);
       assert.strictEqual(FakeUpdater.options[0].pm2HomeExplicit, false);
+      assert.strictEqual(FakeUpdater.options[0].rollback, true);
       assert.deepStrictEqual(calls.runVersions, ['26.12.1']);
+    });
+  });
+
+  it('accepts rollback options without breaking callback mode', function() {
+    var report = makeReport({
+      results: [makeRow({ status: 'failed_no_rollback', startupVerified: false, errors: ['restart failed'] })],
+      totals: { updated: 0, skipped: 0, failed: 1, notUpdated: 0 },
+      exitCode: 1
+    });
+    var FakeUpdater = installUpdater(function() { return Promise.resolve(report); });
+    api.updateNode('26.12.1', { rollback: false }, function(err, result) {
+      calls.callbacks.push({ err: err, report: result });
+    });
+    return flush().then(function() {
+      assert.strictEqual(FakeUpdater.options[0].rollback, false);
+      assert.strictEqual(calls.callbacks.length, 1);
+      assert.ok(calls.callbacks[0].err instanceof Error);
+      assert.strictEqual(calls.callbacks[0].report, report);
+      assert.deepStrictEqual(calls.print, []);
+      assert.deepStrictEqual(calls.exit, []);
+    });
+  });
+
+  it('warns and reports retained configuration without claiming a successful startup', function() {
+    var report = makeReport({
+      results: [makeRow({
+        status: 'failed_no_rollback', startupVerified: false,
+        reason: 'instance zm2-app: startup verification failed: MainPID changed',
+        errors: ['MainPID changed']
+      })],
+      totals: { updated: 0, skipped: 0, failed: 1, notUpdated: 0 },
+      exitCode: 1
+    });
+    installUpdater(function() { return Promise.resolve(report); });
+    api.updateNode('26.12.1', { rollback: false });
+    return flush().then(function() {
+      assert.match(calls.warningAtRun, /rollback.*disabled/i);
+      var output = plain(calls.output.join('\n'));
+      assert.match(output, /configuration updated; startup failed; no rollback/);
+      assert.match(output, /MainPID changed/);
+      assert.doesNotMatch(output, /restored to/);
+      assert.match(output, /failed=1/);
+      assert.deepStrictEqual(calls.exit, [cst.ERROR_EXIT]);
     });
   });
 
@@ -686,8 +730,8 @@ describe('update-node CLI and public declarations', function() {
       "function FakeAPI() { this.pm2_home = process.env.ZM2_HOME; }",
       "FakeAPI.prototype.connect = function(cb) { process.nextTick(function() { cb(null, {}); }); };",
       "FakeAPI.prototype.getVersion = function(cb) { cb(null, require('./package.json').version); };",
-      "FakeAPI.prototype.updateNode = function(version) {",
-      "  console.log('UPDATE:' + JSON.stringify({ version: version }));",
+      "FakeAPI.prototype.updateNode = function(version, options) {",
+      "  console.log('UPDATE:' + JSON.stringify({ version: version, options: options }));",
       "  process.exit(0);",
       "};",
       "Module._load = function(request, parent, isMain) {",
@@ -808,13 +852,19 @@ describe('update-node CLI and public declarations', function() {
   it('parses an exact version and passes it to the API once', function() {
     var result = runCli(['update-node', '26.12.1']);
     assert.strictEqual(result.status, 0, result.stderr || String(result.error));
-    assert.deepStrictEqual(updateMarkers(result), [{ version: '26.12.1' }]);
+    assert.deepStrictEqual(updateMarkers(result), [{ version: '26.12.1', options: { rollback: true } }]);
+  });
+
+  it('passes --no-rollback to the API as rollback false', function() {
+    var result = runCli(['update-node', '26.12.1', '--no-rollback']);
+    assert.strictEqual(result.status, 0, result.stderr || String(result.error));
+    assert.deepStrictEqual(updateMarkers(result), [{ version: '26.12.1', options: { rollback: false } }]);
   });
 
   it('lets the updater validate a non-exact version instead of installing from the CLI', function() {
     var result = runCli(['update-node', 'lts']);
     assert.strictEqual(result.status, 0, result.stderr || String(result.error));
-    assert.deepStrictEqual(updateMarkers(result), [{ version: 'lts' }]);
+    assert.deepStrictEqual(updateMarkers(result), [{ version: 'lts', options: { rollback: true } }]);
   });
 
   it('fails in Commander before calling the API when the version is missing', function() {
@@ -845,6 +895,9 @@ describe('update-node CLI and public declarations', function() {
     assert.ok(/interface UpdateNodeResult/.test(source));
     assert.ok(/interface UpdateNodeTotals/.test(source));
     assert.ok(/interface UpdateNodeReport/.test(source));
+    assert.ok(/interface UpdateNodeOptions/.test(source));
+    assert.ok(/updateNode\(version: string, options: UpdateNodeOptions, errback\?: UpdateNodeCallback\)/.test(source));
+    assert.ok(source.includes("'failed_no_rollback'"));
     assert.ok(/UpdateNodeCallback\s*=\s*\(err: Error \| null, report: UpdateNodeReport\)/.test(source));
   });
 });

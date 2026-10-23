@@ -495,6 +495,7 @@ function createHarness(options) {
     stateStore: stateStore,
     pm2Home: pm2Home,
     pm2HomeExplicit: options.pm2HomeExplicit,
+    rollback: options.rollback,
     systemd: systemd,
     nvm: nvm,
     runtimeConfig: runtimeConfig,
@@ -761,6 +762,7 @@ function createRealUpdater(fixture, options) {
   var updater = new NodeRuntimeUpdater({
     stateStore: store,
     pm2Home: fixture.root,
+    rollback: options.rollback,
     systemd: systemd,
     nvm: nvm,
     runtimeConfig: runtimeConfig,
@@ -1838,6 +1840,139 @@ describe('NodeRuntimeUpdater', function() {
     });
   });
 
+  describe('rollback disabled', function() {
+    it('persists the new interpreter before restart and keeps it when restart fails', async function() {
+      var seenInterpreters = [];
+      var h = createHarness({
+        rollback: false,
+        entries: twoApps(),
+        systemdOptions: {
+          restart: function(name) {
+            seenInterpreters.push(h.stateStore.get(name).exec_interpreter);
+            if (name === 'zm2-bad') throw new Error('restart failed');
+          }
+        }
+      });
+
+      var report = await h.updater.run('20.11.1');
+
+      assert.deepStrictEqual(seenInterpreters, [h.newExecutable, h.newExecutable]);
+      assert.deepStrictEqual(report.results.map(function(row) { return row.status; }),
+        ['failed_no_rollback', 'updated']);
+      assert.strictEqual(h.stateStore.get('zm2-bad').exec_interpreter, h.newExecutable);
+      assert.deepStrictEqual(h.runtimeConfig.calls.restore, []);
+      assert.deepStrictEqual(restartNames(h.systemd), ['zm2-bad', 'zm2-next']);
+      assert.deepStrictEqual(verifyNames(h.verifier), ['zm2-next']);
+      assert.match(report.results[0].errors[0], /instance zm2-bad: restart failed/);
+      assert.deepStrictEqual(report.results[0].rollbackErrors, []);
+      assert.strictEqual(report.results[0].startupVerified, false);
+      assert.deepStrictEqual(report.totals, { updated: 1, skipped: 0, failed: 1, notUpdated: 0 });
+      assert.strictEqual(report.exitCode, 1);
+    });
+
+    it('keeps the new configuration when startup verification detects a changed PID', async function() {
+      var h = createHarness({ rollback: false, entries: twoApps() });
+      h.verifier.verify = function(name, executable) {
+        h.verifier.calls.push({ name: name, executable: executable });
+        if (name === 'zm2-bad') throw new Error('MainPID changed during startup verification');
+      };
+
+      var report = await h.updater.run('20.11.1');
+
+      assert.strictEqual(report.results[0].status, 'failed_no_rollback');
+      assert.match(report.results[0].reason, /MainPID changed/);
+      assert.strictEqual(report.results[1].status, 'updated');
+      assert.deepStrictEqual(h.runtimeConfig.calls.restore, []);
+      assert.deepStrictEqual(restartNames(h.systemd), ['zm2-bad', 'zm2-next']);
+      assert.ok(h.verifier.calls.every(function(call) { return call.executable === h.newExecutable; }));
+      assert.strictEqual(h.stateStore.get('zm2-bad').exec_interpreter, h.newExecutable);
+      assert.strictEqual(report.exitCode, 1);
+    });
+
+    it('attempts all active template instances after failures and leaves stopped instances alone', async function() {
+      var h = createHarness({
+        rollback: false,
+        entries: [makeEntry({ instances: 4 }), makeEntry({ serviceName: 'zm2-next', name: 'next' })],
+        systemdOptions: {
+          statuses: { 'zm2-app@3': inactiveStatus() },
+          restartError: function(name) {
+            return name === 'zm2-app@0' ? new Error('restart rejected') : null;
+          }
+        },
+        verifierOptions: {
+          verifyError: function(name) {
+            return name === 'zm2-app@1' ? new Error('unstable PID') : null;
+          }
+        }
+      });
+
+      var report = await h.updater.run('20.11.1');
+
+      assert.deepStrictEqual(restartNames(h.systemd), ['zm2-app@0', 'zm2-app@1', 'zm2-app@2', 'zm2-next']);
+      assert.deepStrictEqual(verifyNames(h.verifier), ['zm2-app@1', 'zm2-app@2', 'zm2-next']);
+      assert.deepStrictEqual(h.runtimeConfig.calls.restore, []);
+      assert.strictEqual(report.results[0].status, 'failed_no_rollback');
+      assert.strictEqual(report.results[0].errors.length, 2);
+      assert.match(report.results[0].errors[0], /zm2-app@0/);
+      assert.match(report.results[0].errors[1], /zm2-app@1/);
+      assert.strictEqual(report.results[1].status, 'updated');
+      assert.strictEqual(h.stateStore.get('zm2-app').exec_interpreter, h.newExecutable);
+      assert.strictEqual(report.exitCode, 1);
+    });
+
+    it('succeeds normally while keeping originally stopped applications stopped', async function() {
+      var h = createHarness({
+        rollback: false,
+        entries: twoApps(),
+        systemdOptions: { statuses: { 'zm2-bad': inactiveStatus() } }
+      });
+      var report = await h.updater.run('20.11.1');
+      assert.deepStrictEqual(report.results.map(function(row) { return row.status; }), ['updated', 'updated']);
+      assert.strictEqual(report.results[0].stopped, true);
+      assert.deepStrictEqual(restartNames(h.systemd), ['zm2-next']);
+      assert.strictEqual(report.exitCode, 0);
+    });
+
+    it('still restores configuration after a write failure', async function() {
+      var h = createHarness({ rollback: false, entries: [makeEntry()], applyError: new Error('disk full') });
+      var report = await h.updater.run('20.11.1');
+      assert.strictEqual(report.results[0].status, 'failed_restored');
+      assert.deepStrictEqual(h.runtimeConfig.calls.restore, ['zm2-app']);
+      assert.strictEqual(h.stateStore.get('zm2-app').exec_interpreter, 'node');
+      assert.strictEqual(report.exitCode, 1);
+    });
+
+    it('does not try the new runtime if daemon-reload fails', async function() {
+      var reloads = 0;
+      var h = createHarness({
+        rollback: false,
+        entries: [makeEntry()],
+        systemdOptions: {
+          daemonReloadError: function() { return ++reloads === 1 ? new Error('reload failed') : null; }
+        }
+      });
+      var report = await h.updater.run('20.11.1');
+      assert.strictEqual(report.results[0].status, 'failed_restored');
+      assert.deepStrictEqual(h.verifier.calls, [{ name: 'zm2-app', executable: h.oldExecutable }]);
+      assert.strictEqual(h.stateStore.get('zm2-app').exec_interpreter, 'node');
+      assert.strictEqual(report.exitCode, 1);
+    });
+
+    it('restores instead of starting the new runtime when metadata cannot be persisted', async function() {
+      var writes = 0;
+      var h = createHarness({
+        rollback: false,
+        entries: [makeEntry()],
+        replaceError: function() { return ++writes === 1 ? new Error('state write failed') : null; }
+      });
+      var report = await h.updater.run('20.11.1');
+      assert.strictEqual(report.results[0].status, 'failed_restored');
+      assert.deepStrictEqual(h.verifier.calls, [{ name: 'zm2-app', executable: h.oldExecutable }]);
+      assert.strictEqual(h.stateStore.get('zm2-app').exec_interpreter, 'node');
+      assert.strictEqual(report.exitCode, 1);
+    });
+  });
+
   describe('rollback', function() {
     it('keeps a status query failure before any write as failed_unchanged and continues', async function() {
       var h = createHarness({
@@ -2726,6 +2861,30 @@ describe('NodeRuntimeUpdater', function() {
         assert.strictEqual(metadata.created_at, 100 + index);
         assert.strictEqual(metadata.custom, 'keep-' + app.name);
       });
+    });
+
+    it('retains real unit, PATH and persisted metadata after a startup failure with rollback disabled', async function() {
+      var fixture = createRealFixture([{ name: 'bad' }, { name: 'next' }, { name: 'stopped', active: false }]);
+      var h = createRealUpdater(fixture, {
+        rollback: false,
+        verifyError: function(name, executable) {
+          return name === 'zm2-bad' && executable === fixture.newExecutable
+            ? new Error('MainPID changed') : null;
+        }
+      });
+      var report = await h.updater.run('20.11.1');
+      assert.deepStrictEqual(report.results.map(function(row) { return row.status; }),
+        ['failed_no_rollback', 'updated', 'updated']);
+      var reloaded = new StateStore(fixture.statePath).load({ strict: true });
+      fixture.apps.forEach(function(app) {
+        assert.ok(fs.readFileSync(app.unitPath, 'utf8').includes('ExecStart=' + fixture.newExecutable));
+        assert.ok(fs.readFileSync(app.envPath, 'utf8').includes('PATH=' + path.dirname(fixture.newExecutable) + ':'));
+        assert.strictEqual(reloaded.get(app.serviceName).exec_interpreter, fixture.newExecutable);
+        assert.strictEqual(reloaded.get(app.serviceName).pm_id, app.metadata.pm_id);
+      });
+      assert.deepStrictEqual(restartNames(h.systemd), ['zm2-bad', 'zm2-next']);
+      assert.ok(h.verifierCalls.every(function(call) { return call.executable === fixture.newExecutable; }));
+      assert.strictEqual(report.exitCode, 1);
     });
 
     it('rolls back exact files and metadata after the second write fails', async function() {
