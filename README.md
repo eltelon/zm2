@@ -324,9 +324,19 @@ zm2-scheduler    20.19.0   22.14.0    updated (remains stopped)
 zm2-python       —         —          skipped: non-Node interpreter
 ```
 
-Possible results are `updated`, `updated (remains stopped)`, `skipped` with a reason, `failed (unchanged)`, `failed (restored)`, `failed (restoration failed)` and `not updated (global failure)`. Skipped rows include the reason; failed and not-updated rows include the error detail and any rollback errors. The report ends with totals for updated, skipped, failed and not updated applications.
+Possible results are `updated`, `updated (remains stopped)`, `skipped` with a reason, `failed (unchanged)`, `failed (restored)`, `failed (restoration failed)`, `configuration updated; startup failed; no rollback` and `not updated (global failure)`. Skipped rows include the reason; failed and not-updated rows include the error detail and any rollback errors. The report ends with totals for updated, skipped, failed and not updated applications.
 
-On a per-application failure ZM2 restores only that application's files and metadata, recovers the instances that were previously running and continues with the next application. The exit code is `1` if any application failed or was not updated, even when a rollback recovered the service. It is `0` only when there were no global errors and all eligible applications were updated, already current, or intentionally skipped.
+By default, on a per-application failure ZM2 restores only that application's files and metadata, recovers the instances that were previously running and continues with the next application. The exit code is `1` if any application failed or was not updated, even when a rollback recovered the service. It is `0` only when there were no global errors and all eligible applications were updated, already current, or intentionally skipped.
+
+### Keeping the new configuration after startup failures
+
+```bash
+$ zm2 update-node 26.12.1 --no-rollback
+```
+
+This commits the new Node executable, `PATH` and StateStore metadata before restarting. If a restart or startup verification fails, ZM2 keeps that configuration, attempts the remaining active instances and applications, and reports `configuration updated; startup failed; no rollback`. Stopped instances stay stopped. Verification is still performed and the exit code remains `1` on any failure; the report does not claim the application is running successfully on the new runtime. Use this deliberately: services may remain unavailable and require manual investigation.
+
+The flag disables rollback for startup failures only. Installation, validation, configuration-write, daemon-reload and metadata-persistence errors retain the normal safeguards. The programmatic equivalent is `zm2.updateNode(version, { rollback: false }, callback)`; the existing `zm2.updateNode(version, callback)` still enables automatic rollback.
 
 To diagnose a failed update or an incomplete restoration:
 

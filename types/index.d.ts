@@ -202,6 +202,13 @@ export function getPID(app_name?: string, errback?: ErrProcCallback): void;
  * @param errback - Called with an error when exitCode is 1 and the full report
  */
 export function updateNode(version: string, errback?: UpdateNodeCallback): void;
+export function updateNode(version: string, options: UpdateNodeOptions, errback?: UpdateNodeCallback): void;
+
+/** Options for updating Node.js runtimes. */
+export interface UpdateNodeOptions {
+  /** Keep new configuration on startup failure when false. Defaults to true. */
+  rollback?: boolean;
+}
 
 /**
  * Trigger a custom action on a process
@@ -663,7 +670,7 @@ export interface UpdateNodeResult {
   name: string;
   previousVersion: string | null;
   status: 'updated' | 'skipped' | 'failed_unchanged' | 'failed_restored' |
-    'failed_restore' | 'not_updated';
+    'failed_restore' | 'failed_no_rollback' | 'not_updated';
   stopped: boolean;
   startupVerified: boolean;
   reason: string | null;
