@@ -41,8 +41,19 @@ zm2 CLI  ──►  systemctl / journalctl  ──►  systemd units (zm2-<name>
 | Cron-restart timer | `/etc/systemd/system/zm2-<name>-cron.timer` |
 | Environment file | `/etc/zm2/env/zm2-<name>.env` |
 | ZM2 state (metadata) | `~/.zm2/state.json` |
+| State write lock (temporary) | `~/.zm2/state.json.lock` |
 | HTTP API key | `~/.zm2/api-key` |
 | HTTP API service | `zm2-api.service` |
+
+Environment files are owner-only (`0600`) inside an owner-only directory (`0700`);
+existing permissions are corrected when ZM2 writes an environment file.
+
+State updates are serialized and atomically replace `state.json`. A writer waits
+up to two seconds for `state.json.lock`, then reports an error rather than
+overwriting another writer's changes. An abruptly terminated writer may leave a
+lock file: inspect its owner PID and remove it **only after confirming that no
+ZM2 process is updating state**. With `ZM2_HOME` configured, these files live in
+that directory instead of `~/.zm2`.
 
 ## Installing ZM2
 

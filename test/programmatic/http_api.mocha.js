@@ -4,6 +4,18 @@ var fs = require('fs');
 var http = require('http');
 var HttpApi = require('../../lib/API/HttpApi');
 
+function request(opts, body, cb) {
+  var req = http.request(opts, function(res) {
+    var raw = '';
+    res.setEncoding('utf8');
+    res.on('data', function(chunk) { raw += chunk; });
+    res.on('end', function() { cb(null, res, raw); });
+  });
+  req.on('error', cb);
+  if (body) req.write(body);
+  req.end();
+}
+
 describe('HttpApi', function() {
   describe('formatPrometheusMetrics', function() {
     it('should format process data as Prometheus text', function() {
@@ -135,6 +147,23 @@ describe('HttpApi', function() {
     it('should return 405 for GET on action routes', function() {
       var route = HttpApi.parseRoute('GET', '/api/processes/myapp/stop');
       route.handler.should.equal('methodNotAllowed');
+    });
+
+    it('should decode valid percent-encoded process names', function() {
+      var route = HttpApi.parseRoute('POST', '/api/processes/my%20app/start');
+      route.handler.should.equal('startProcess');
+      route.name.should.equal('my app');
+    });
+
+    it('should return badRequest for incomplete percent escapes', function() {
+      HttpApi.parseRoute('POST', '/api/processes/%/start').handler.should.equal('badRequest');
+      HttpApi.parseRoute('POST', '/api/processes/%2/start').handler.should.equal('badRequest');
+      HttpApi.parseRoute('POST', '/api/processes/%zz/start').handler.should.equal('badRequest');
+    });
+
+    it('should return badRequest for invalid UTF-8 percent escapes', function() {
+      HttpApi.parseRoute('POST', '/api/processes/%C3%28/start').handler.should.equal('badRequest');
+      HttpApi.parseRoute('POST', '/api/processes/%E0%A4%A/start').handler.should.equal('badRequest');
     });
   });
 
@@ -408,6 +437,70 @@ describe('HttpApi', function() {
         done();
       });
       req.end();
+    });
+
+    describe('malformed percent-encoding in process name', function() {
+      var malformedPaths = [
+        '/api/processes/%/start',
+        '/api/processes/%2/start',
+        '/api/processes/%zz/start',
+        '/api/processes/%C3%28/start',
+        '/api/processes/%E0%A4%A/start'
+      ];
+
+      malformedPaths.forEach(function(malformedPath) {
+        it('POST ' + malformedPath + ' with auth should return 400 JSON', function(done) {
+          request({
+            hostname: '127.0.0.1', port: port, path: malformedPath,
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + apiKey }
+          }, null, function(err, res, raw) {
+            if (err) return done(err);
+            res.statusCode.should.equal(400);
+            res.headers['content-type'].should.startWith('application/json');
+            var data = JSON.parse(raw);
+            data.success.should.be.false();
+            data.error.should.be.a.String();
+            done();
+          });
+        });
+      });
+
+      it('POST malformed route without auth should return 400 JSON', function(done) {
+        request({
+          hostname: '127.0.0.1', port: port, path: '/api/processes/%/start',
+          method: 'POST'
+        }, null, function(err, res, raw) {
+          if (err) return done(err);
+          res.statusCode.should.equal(400);
+          res.headers['content-type'].should.startWith('application/json');
+          var data = JSON.parse(raw);
+          data.success.should.be.false();
+          done();
+        });
+      });
+
+      it('should keep serving valid requests after malformed route attempts', function(done) {
+        // Unauthenticated request still works
+        request({
+          hostname: '127.0.0.1', port: port, path: '/metrics'
+        }, null, function(err, res, raw) {
+          if (err) return done(err);
+          res.statusCode.should.equal(200);
+          raw.should.containEql('zm2_process_cpu_percent{name="testapp"} 5.5');
+
+          // Authenticated request still works
+          request({
+            hostname: '127.0.0.1', port: port, path: '/api/processes',
+            headers: { 'Authorization': 'Bearer ' + apiKey }
+          }, null, function(err2, res2, raw2) {
+            if (err2) return done(err2);
+            res2.statusCode.should.equal(200);
+            JSON.parse(raw2).processes[0].name.should.equal('testapp');
+            done();
+          });
+        });
+      });
     });
   });
 
