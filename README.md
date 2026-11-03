@@ -371,7 +371,7 @@ $ sudo env ZM2_UPDATE_NODE_E2E=1 NVM_DIR="$NVM_DIR" ZM2_HOME="$ZM2_HOME" \
     bash test/e2e/systemd/update-node.sh
 ```
 
-`ZM2_HOME` must be an existing empty test directory, never the home containing real applications. The script creates a nested temporary home and cleans up only its own services and nested files; the outer directory remains. It refuses collisions with existing test services. The CLI runtime must be Node.js 16 or newer; `nvm.sh` must not be group/world-writable. Real systemd integration cannot be validated on macOS; unit tests use simulated dependencies instead.
+`ZM2_HOME` must be an existing empty test directory, never the home containing real applications. The script creates a nested temporary home and cleans up only its own services and nested files; the outer directory remains. It refuses collisions with existing test services. The CLI runtime must be Node.js 16 or newer; `nvm.sh` must not be group/world-writable. Real systemd integration requires a Linux backend; unit tests on macOS use simulated dependencies instead. For an isolated Linux sandbox on macOS, see the [opt-in Compose/systemd integration harness](test/systemd/README.md), which runs systemd and a ZM2-managed Express app inside a dedicated disposable Colima VM.
 
 ## Other Commands
 
