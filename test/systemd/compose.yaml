@@ -1,0 +1,18 @@
+services:
+  sandbox:
+    build:
+      context: ${ZM2_SYSTEMD_BUILD_CONTEXT:?Use test/systemd/run.sh to prepare a safe build context}
+      dockerfile: test/systemd/Dockerfile
+    privileged: true
+    cgroup: private
+    command: ["/sbin/init"]
+    stop_signal: SIGRTMIN+3
+    stop_grace_period: 30s
+    tmpfs:
+      - /run
+      - /run/lock
+      - /tmp
+    environment:
+      container: docker
+    labels:
+      org.zm2.purpose: systemd-e2e

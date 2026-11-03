@@ -1,0 +1,13 @@
+{
+  "name": "zm2-systemd-express-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone Express fixture for ZM2 real-systemd integration tests",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "5.1.0"
+  }
+}
