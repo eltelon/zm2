@@ -299,6 +299,35 @@ sudo env ZM2_UPDATE_NODE_E2E=1 NVM_DIR="$NVM_DIR" ZM2_HOME="$ZM2_HOME" ZM2_NODE_
 - Documentación, advertencias y límites: Task 8.
 - Verificación simulada multiplataforma e integración Linux: Tasks 1 a 9.
 
+## Estado de ejecución
+
+Worktree: `.worktrees/update-node`, rama `feat/update-node`.
+
+- Task 1: implementación y revisiones de requisitos/calidad completas, 35 pruebas verificadas, commit `ae2ade86`.
+- Task 2: adaptador nvm revisado (requisitos/calidad), 30 pruebas verificadas incluido bash real con stub local sin descargas, commit `1ecf4aff`.
+- Task 3: edición de configuración revisada (requisitos/calidad), prioridad PATH, roundtrip `%` y variable de instancia personalizados corregidos; 57 pruebas verificadas, commit `a4f742db`. Observación menor no bloqueante: si falla una escritura parcial del temporal antes de retornar, puede quedar un temporal ignorado por systemd; sin garantía de durabilidad ante corte de energía.
+- Task 4: verificador revisado (requisitos/calidad), 38 pruebas verificadas, commit `ecc917f9`; helper Systemd incluido y probado en Task 3.
+- Task 5: coordinador revisado (requisitos/calidad), 45 pruebas verificadas incluido recorrido con adaptadores reales; procedencia explícita del home bajo sudo corregida y probada, commit `937dc5a3`.
+- Task 6: rollback implementado y revisado (requisitos/calidad), 68 pruebas verificadas; snapshots exactos desde store.get y persistencia staged replace, recuperación por instancia con reset-failed acotado y continuación tras fallos; commit `9f62fc3a`. Estado temporal rollbackContexts eliminado por simplificación.
+- Task 7: API/CLI revisadas (requisitos y calidad), diagnóstico de plantillas corregido, commit `ea3f4fda`; ampliación de procedencia del home revisada en Task 5, 23 pruebas verificadas.
+- Task 8: documentación y runner revisados (requisitos y calidad), commit `0696175d`; las cinco suites existen y `bash -n test/unit.sh` verificado.
+- Task 9: script y fixtures revisados (requisitos/calidad estática), sintaxis y rechazo seguro en macOS verificados, instrucciones README incluidas, commit `d81bc040`. Ejecución real Linux pendiente; requiere rollback de Task 6.
+
+Baseline en este worktree: 59 pruebas existentes verificadas. Dependencias instaladas con `npm ci --ignore-scripts --force` por tratarse de macOS; no se ejecutaron servicios reales.
+
+## Verificación de entrega registrada
+
+- [x] Implementación de Tasks 1–8 revisada por requisitos y calidad; cambios guardados en commits separados.
+- [x] Script y fixtures de Task 9 preparados y revisados estáticamente; rechazo seguro en macOS y sintaxis comprobados.
+- [x] Regresión focalizada: **290 passing, 0 failing**, sin reintentos, ejecutada por el coordinador después de la última simplificación.
+- [x] Sintaxis de los JavaScript modificados, `bash -n` de ambos runners y `git diff --check` sin errores.
+- [x] `npm pack --dry-run --ignore-scripts --json`: los nueve archivos necesarios de runtime, API, entrada y tipos están incluidos.
+- [x] Revisión final independiente del rango `2a3c614d..9f62fc3a`: sin defectos bloqueantes; resultado READY con integración Linux pendiente.
+- [ ] Ejecutar `test/e2e/systemd/update-node.sh` en Linux desechable con systemd/nvm reales. No se ejecutó en este Mac.
+- [ ] Ejecutar las suites completas Linux/CI (Node 16/24 y Bun) en el entorno apropiado. No se afirma que el runner legado completo haya pasado.
+
+No se hizo merge ni push. La implementación permanece en `feat/update-node`, worktree `.worktrees/update-node`, pendiente de la elección de integración del usuario.
+
 ## Condición de entrega
 
 No declarar la funcionalidad terminada solo por compilar o tener mocks verdes. Adjuntar salida de la regresión focalizada, resultado de revisión y evidencia Linux si fue ejecutada. La integración no realizada se informa como pendiente; no se afirma cero downtime ni salud funcional garantizada.

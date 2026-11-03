@@ -55,6 +55,11 @@ touch unit_time
 D=test/programmatic
 
 runUnitTest $D/systemd_logs.mocha.js
+runUnitTest $D/nvm.mocha.js
+runUnitTest $D/systemd_runtime_config.mocha.js
+runUnitTest $D/systemd_runtime_verifier.mocha.js
+runUnitTest $D/systemd_node_update.mocha.js
+runUnitTest $D/update_node_cli.mocha.js
 
 # Abort script at first error
 #set -e

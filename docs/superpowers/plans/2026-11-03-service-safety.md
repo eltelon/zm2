@@ -25,3 +25,12 @@
 - Environment: Node 22 on macOS. Real systemd integration still requires Linux; systemd commands were stubbed, filesystem tests used temporary directories, concurrency tests used six real child processes.
 - Review follow-ups covered new/existing ecosystem failures, stop/delete from ecosystem files, public kill and CLI exit codes, empty kill idempotency, and explicitly pinned ID collisions.
 - Orphaned lock files are not automatically stolen. README documents the bounded wait and manual recovery after verifying no active writer.
+
+## Integration with remote update-node
+
+- Merged the remote `update-node` / `--no-rollback` work without dropping the safety fixes.
+- `StateStore.replace()` reloads under the shared mutation lock and atomically persists an exact metadata snapshot, retaining unrelated concurrent registrations and refusing deleted services or duplicate IDs.
+- Strict loads retain the remote validation/error contract. Atomic writes preserve existing state ownership/mode; newly created state remains `0600`.
+- Kept both test sets and added three regressions for replacement with stale clients, concurrent deletion and ID collisions. Updated the temporary-file assertion to account for the exclusive lock as well as the exclusive data file.
+- Combined safety and update-node verification: **410 passing**, no retries, across the five safety suites and `nvm`, `systemd_node_update`, `systemd_runtime_config`, `systemd_runtime_verifier`, `update_node_cli`.
+- JavaScript syntax and both bash runners checked. Linux/systemd integration remains unexecuted on this macOS host.
