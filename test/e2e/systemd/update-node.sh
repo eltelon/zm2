@@ -31,16 +31,14 @@ FIXTURES="$REPO_ROOT/test/fixtures/update-node"
 STABLE_APP="update-node-e2e-stable"
 INCOMPAT_APP="update-node-e2e-incompatible"
 STOPPED_APP="update-node-e2e-stopped"
-MIXED_APP="update-node-e2e-mixed"
 
 STABLE_SVC="zm2-$STABLE_APP"
 INCOMPAT_SVC="zm2-$INCOMPAT_APP"
 STOPPED_SVC="zm2-$STOPPED_APP"
-MIXED_SVC="zm2-$MIXED_APP"
 
-ALL_SERVICES=("$STABLE_SVC" "$INCOMPAT_SVC" "$STOPPED_SVC" "$MIXED_SVC")
-ALL_INSTANCES=(1 1 1 2)
-AFTER_DELETE_SERVICES=("$STABLE_SVC" "$STOPPED_SVC" "$MIXED_SVC")
+ALL_SERVICES=("$STABLE_SVC" "$INCOMPAT_SVC" "$STOPPED_SVC")
+ALL_INSTANCES=(1 1 1)
+AFTER_DELETE_SERVICES=("$STABLE_SVC" "$STOPPED_SVC")
 
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$-${RANDOM:-0}"
 
@@ -895,14 +893,10 @@ main() {
   local stable_env_stat_before
   local stopped_unit_stat_before
   local stopped_env_stat_before
-  local mixed_unit_stat_before
-  local mixed_env_stat_before
   local alias_after_first
   local alias_after_second
   local pid_stable_after_first
-  local pid_mixed0_after_first
   local nrestarts_stable_after_first
-  local nrestarts_mixed0_after_first
 
   if [[ "${ZM2_UPDATE_NODE_E2E:-}" != "1" ]]; then
     fail "Refusing to run: set ZM2_UPDATE_NODE_E2E=1 to opt in to this destructive integration test"
@@ -1048,46 +1042,31 @@ main() {
   create_app "$STABLE_APP" stable.js 1
   create_app "$INCOMPAT_APP" fail-on-target.js 1 --no-autorestart
   create_app "$STOPPED_APP" stable.js 1
-  create_app "$MIXED_APP" stable.js 2
 
   wait_active "$STABLE_SVC"
   wait_active "$INCOMPAT_SVC"
   wait_active "$STOPPED_SVC"
-  wait_active "$MIXED_SVC@0"
-  wait_active "$MIXED_SVC@1"
 
   info "Stopping $STOPPED_SVC through the ZM2 CLI"
   run_zm2 stop "$STOPPED_APP"
   wait_inactive "$STOPPED_SVC"
   wait_pid_zero "$STOPPED_SVC"
 
-  info "Stopping only $MIXED_SVC@1 with systemctl"
-  systemctl stop "$MIXED_SVC@1.service"
-  wait_inactive "$MIXED_SVC@1"
-  wait_pid_zero "$MIXED_SVC@1"
-  wait_active "$MIXED_SVC@0"
-
   assert_state_services "${ALL_SERVICES[@]}"
   assert_preserved_state_metadata "initial stable" "$STABLE_SVC" stable.js 1
   assert_preserved_state_metadata "initial stopped" "$STOPPED_SVC" stable.js 1
-  assert_preserved_state_metadata "initial mixed" "$MIXED_SVC" stable.js 2
 
   assert_active_with_exec "initial stable" "$STABLE_SVC" "$OLD_NODE"
   assert_active_with_exec "initial incompatible" "$INCOMPAT_SVC" "$OLD_NODE"
   assert_stopped_with_config "initial stopped" "$STOPPED_SVC" "$STOPPED_SVC" "$OLD_NODE" "$OLD_VERSION"
-  assert_active_with_exec "initial mixed instance 0" "$MIXED_SVC@0" "$OLD_NODE"
-  assert_stopped_with_config "initial mixed instance 1" "$MIXED_SVC@1" "$MIXED_SVC" "$OLD_NODE" "$OLD_VERSION"
 
   assert_state_exec "initial stable" "$STABLE_SVC" "$OLD_NODE" "$OLD_VERSION"
   assert_state_exec "initial incompatible" "$INCOMPAT_SVC" "$OLD_NODE" "$OLD_VERSION"
   assert_state_exec "initial stopped" "$STOPPED_SVC" "$OLD_NODE" "$OLD_VERSION"
-  assert_state_exec "initial mixed" "$MIXED_SVC" "$OLD_NODE" "$OLD_VERSION"
 
   assert_enabled_state "initial stable" "$STABLE_SVC" 1
   assert_enabled_state "initial incompatible" "$INCOMPAT_SVC" 1
   assert_enabled_state "initial stopped" "$STOPPED_SVC" 0
-  assert_enabled_state "initial mixed instance 0" "$MIXED_SVC@0" 1
-  assert_enabled_state "initial mixed instance 1" "$MIXED_SVC@1" 1
 
   incompat_unit_before="$E2E_ROOT/incompat.unit.before"
   incompat_env_before="$E2E_ROOT/incompat.env.before"
@@ -1098,8 +1077,6 @@ main() {
   stable_env_stat_before="$(stat_signature "$(env_path_for "$STABLE_SVC")")"
   stopped_unit_stat_before="$(stat_signature "$(unit_path_for "$STOPPED_SVC" 1)")"
   stopped_env_stat_before="$(stat_signature "$(env_path_for "$STOPPED_SVC")")"
-  mixed_unit_stat_before="$(stat_signature "$(unit_path_for "$MIXED_SVC" 2)")"
-  mixed_env_stat_before="$(stat_signature "$(env_path_for "$MIXED_SVC")")"
 
   cp -- "$(unit_path_for "$INCOMPAT_SVC" 1)" "$incompat_unit_before"
   cp -- "$(env_path_for "$INCOMPAT_SVC")" "$incompat_env_before"
@@ -1161,45 +1138,28 @@ main() {
   assert_env_contains "stopped after first run" "$(env_path_for "$STOPPED_SVC")" "ZM2_UPDATE_NODE_E2E_RUN_ID=$RUN_ID"
   assert_enabled_state "stopped after first run" "$STOPPED_SVC" 0
 
-  assert_active_with_exec "mixed instance 0 after first run" "$MIXED_SVC@0" "$TARGET_NODE"
-  assert_stopped_with_config "mixed instance 1 after first run" "$MIXED_SVC@1" "$MIXED_SVC" "$TARGET_NODE" "$TARGET_VERSION"
-  assert_env_path_prefixed "mixed after first run" "$(env_path_for "$MIXED_SVC")" "$TARGET_BIN"
-  assert_env_contains "mixed after first run" "$(env_path_for "$MIXED_SVC")" "ZM2_NODE_TARGET=$TARGET_VERSION"
-  assert_env_contains "mixed after first run" "$(env_path_for "$MIXED_SVC")" "ZM2_UPDATE_NODE_E2E_RUN_ID=$RUN_ID"
-  assert_enabled_state "mixed instance 0 after first run" "$MIXED_SVC@0" 1
-  assert_enabled_state "mixed instance 1 after first run" "$MIXED_SVC@1" 1
-
   assert_state_services "${ALL_SERVICES[@]}"
-  assert_state_exec "mixed after first run" "$MIXED_SVC" "$TARGET_NODE" "$TARGET_VERSION"
   assert_state_exec "stopped after first run" "$STOPPED_SVC" "$TARGET_NODE" "$TARGET_VERSION"
   assert_preserved_state_metadata "stable after first run" "$STABLE_SVC" stable.js 1
   assert_preserved_state_metadata "stopped after first run" "$STOPPED_SVC" stable.js 1
-  assert_preserved_state_metadata "mixed after first run" "$MIXED_SVC" stable.js 2
 
   assert_preserved_unit_directives "stable after first run" "$STABLE_SVC" 1
   assert_preserved_unit_directives "stopped after first run" "$STOPPED_SVC" 1
-  assert_preserved_unit_directives "mixed after first run" "$MIXED_SVC" 2
 
   assert_file_stat_preserved "stable unit ownership/mode after first run" "$(unit_path_for "$STABLE_SVC" 1)" "$stable_unit_stat_before"
   assert_file_stat_preserved "stable environment ownership/mode after first run" "$(env_path_for "$STABLE_SVC")" "$stable_env_stat_before"
   assert_file_stat_preserved "stopped unit ownership/mode after first run" "$(unit_path_for "$STOPPED_SVC" 1)" "$stopped_unit_stat_before"
   assert_file_stat_preserved "stopped environment ownership/mode after first run" "$(env_path_for "$STOPPED_SVC")" "$stopped_env_stat_before"
-  assert_file_stat_preserved "mixed unit ownership/mode after first run" "$(unit_path_for "$MIXED_SVC" 2)" "$mixed_unit_stat_before"
-  assert_file_stat_preserved "mixed environment ownership/mode after first run" "$(env_path_for "$MIXED_SVC")" "$mixed_env_stat_before"
 
   alias_after_first="$(alias_signature)"
   assert_value_equal "nvm default alias after first run" "$ALIAS_BEFORE" "$alias_after_first"
 
   pid_stable_after_first="$(unit_pid "$STABLE_SVC")"
-  pid_mixed0_after_first="$(unit_pid "$MIXED_SVC@0")"
   nrestarts_stable_after_first="$(unit_nrestarts "$STABLE_SVC")"
-  nrestarts_mixed0_after_first="$(unit_nrestarts "$MIXED_SVC@0")"
 
   verify_unit "$STABLE_SVC.service"
   verify_unit "$INCOMPAT_SVC.service"
   verify_unit "$STOPPED_SVC.service"
-  verify_unit "$MIXED_SVC@0.service"
-  verify_unit "$MIXED_SVC@1.service"
 
   info "Deleting $INCOMPAT_SVC through the ZM2 CLI"
   run_zm2 delete "$INCOMPAT_APP"
@@ -1239,46 +1199,32 @@ main() {
   fi
 
   assert_active_with_exec "stable after second run" "$STABLE_SVC" "$TARGET_NODE"
-  assert_active_with_exec "mixed instance 0 after second run" "$MIXED_SVC@0" "$TARGET_NODE"
   assert_stopped_with_config "stopped after second run" "$STOPPED_SVC" "$STOPPED_SVC" "$TARGET_NODE" "$TARGET_VERSION"
-  assert_stopped_with_config "mixed instance 1 after second run" "$MIXED_SVC@1" "$MIXED_SVC" "$TARGET_NODE" "$TARGET_VERSION"
 
   assert_state_services "${AFTER_DELETE_SERVICES[@]}"
   assert_state_exec "stable after second run" "$STABLE_SVC" "$TARGET_NODE" "$TARGET_VERSION"
-  assert_state_exec "mixed after second run" "$MIXED_SVC" "$TARGET_NODE" "$TARGET_VERSION"
   assert_state_exec "stopped after second run" "$STOPPED_SVC" "$TARGET_NODE" "$TARGET_VERSION"
   assert_preserved_state_metadata "stable after second run" "$STABLE_SVC" stable.js 1
   assert_preserved_state_metadata "stopped after second run" "$STOPPED_SVC" stable.js 1
-  assert_preserved_state_metadata "mixed after second run" "$MIXED_SVC" stable.js 2
 
   assert_preserved_unit_directives "stable after second run" "$STABLE_SVC" 1
   assert_preserved_unit_directives "stopped after second run" "$STOPPED_SVC" 1
-  assert_preserved_unit_directives "mixed after second run" "$MIXED_SVC" 2
 
   assert_file_stat_preserved "stable unit ownership/mode after second run" "$(unit_path_for "$STABLE_SVC" 1)" "$stable_unit_stat_before"
   assert_file_stat_preserved "stable environment ownership/mode after second run" "$(env_path_for "$STABLE_SVC")" "$stable_env_stat_before"
   assert_file_stat_preserved "stopped unit ownership/mode after second run" "$(unit_path_for "$STOPPED_SVC" 1)" "$stopped_unit_stat_before"
   assert_file_stat_preserved "stopped environment ownership/mode after second run" "$(env_path_for "$STOPPED_SVC")" "$stopped_env_stat_before"
-  assert_file_stat_preserved "mixed unit ownership/mode after second run" "$(unit_path_for "$MIXED_SVC" 2)" "$mixed_unit_stat_before"
-  assert_file_stat_preserved "mixed environment ownership/mode after second run" "$(env_path_for "$MIXED_SVC")" "$mixed_env_stat_before"
 
   assert_env_path_prefixed "stable after second run" "$(env_path_for "$STABLE_SVC")" "$TARGET_BIN"
-  assert_env_path_prefixed "mixed after second run" "$(env_path_for "$MIXED_SVC")" "$TARGET_BIN"
   assert_env_path_prefixed "stopped after second run" "$(env_path_for "$STOPPED_SVC")" "$TARGET_BIN"
 
   assert_enabled_state "stable after second run" "$STABLE_SVC" 1
-  assert_enabled_state "mixed instance 0 after second run" "$MIXED_SVC@0" 1
-  assert_enabled_state "mixed instance 1 after second run" "$MIXED_SVC@1" 1
   assert_enabled_state "stopped after second run" "$STOPPED_SVC" 0
 
   [[ "$(unit_pid "$STABLE_SVC")" == "$pid_stable_after_first" ]] \
     || fail "stable MainPID changed on the idempotent second run"
-  [[ "$(unit_pid "$MIXED_SVC@0")" == "$pid_mixed0_after_first" ]] \
-    || fail "mixed instance 0 MainPID changed on the idempotent second run"
   [[ "$(unit_nrestarts "$STABLE_SVC")" == "$nrestarts_stable_after_first" ]] \
     || fail "stable NRestarts changed on the idempotent second run"
-  [[ "$(unit_nrestarts "$MIXED_SVC@0")" == "$nrestarts_mixed0_after_first" ]] \
-    || fail "mixed instance 0 NRestarts changed on the idempotent second run"
 
   assert_runtime "old runtime after second run" "$OLD_NODE" "$OLD_VERSION"
   assert_runtime "target runtime after second run" "$TARGET_NODE" "$TARGET_VERSION"
@@ -1288,8 +1234,6 @@ main() {
 
   verify_unit "$STABLE_SVC.service"
   verify_unit "$STOPPED_SVC.service"
-  verify_unit "$MIXED_SVC@0.service"
-  verify_unit "$MIXED_SVC@1.service"
 
   info "All assertions passed; removing test resources"
   remove_created_resources

@@ -1,14 +1,13 @@
+# Basic HTTP Server
 
-# Basic HTTP Server and Cluster mode
-
-In this boilerplate it will start an http server in cluster mode.
-
-You can check the content of the ecosystem.config.js on how to start mutliple instances of the same HTTP application in order to get the most from your working system.
+This example starts one HTTP server managed by ZM2/systemd.
+The ecosystem configuration uses `instances: 1`; other requested counts
+are accepted for compatibility but ignored with a warning.
 
 ## Via CLI
 
-Via CLI you can start any HTTP/TCP application in cluster mode with:
-
 ```bash
-$ pm2 start api.js -i max
+zm2 start api.js
 ```
+
+ZM2 does not provide cluster workers, shared HTTP listeners or automatic load balancing.

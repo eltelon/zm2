@@ -36,9 +36,9 @@ On success or failure, diagnostics are collected before the project is removed. 
 ## Scenarios
 
 1. PID 1, systemctl, actual unit cgroups and journal. Failed background units must be diagnosed rather than treated as successful systemd startup.
-2. ZM2 start/stop/start/restart; enabled-state preservation; HTTP PID/runtime matched against MainPID and procfs; journal and finite CLI logs; private env permissions including restrictive rewrites; concurrent registration; visible control failure and safe deletion.
+2. Single-instance compatibility (`-i`, `--instances`, environment-derived ecosystem counts) and explicit legacy-template activation rejection/cleanup; ZM2 start/stop/start/restart; enabled-state preservation; HTTP PID/runtime matched against MainPID and procfs; journal and finite CLI logs; private env permissions including restrictive rewrites; concurrent registration; visible control failure and safe deletion.
 3. Stop and start the **same container** with persistent units, metadata and filesystem, but fresh `/run` and `/tmp`. An enabled Express app must start automatically, while a stopped/disabled app remains stopped. Init identity/configuration fingerprints are compared.
-4. Existing `test/e2e/systemd/update-node.sh`: stable update, incompatible rollback, stopped app, mixed instances, idempotency, ownership/mode preservation and cleanup.
+4. Existing `test/e2e/systemd/update-node.sh`: stable update, incompatible rollback, stopped single-service app, idempotency, ownership/mode preservation and cleanup.
 5. `--no-rollback`: failed startup must return 1 without restoring the old configuration, while compatible apps update and stopped apps stay stopped. HTTP checks independently confirm Express on the new runtime.
 
 No global `zm2 kill`, `delete all`, host reboot, shared state home or mock systemd is used. Test services have the prefix `zm2-compose-e2e-`; the existing update script uses its own guarded prefix and isolated home.

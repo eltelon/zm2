@@ -46,7 +46,7 @@ CLI/API → SystemdClient.executeRemote(method, data)
 | `max_restarts` | `StartLimitBurst` |
 | `kill_timeout` | `TimeoutStopSec` |
 | `max_memory_restart` | `MemoryMax` |
-| `instances: N` | Template unit `zm2-app@.service` |
+| `instances: N` | Compatibility input; normalized to one service |
 | `cron_restart` | Systemd timer unit |
 | env vars | `EnvironmentFile=/etc/zm2/env/<name>.env` |
 
@@ -110,7 +110,7 @@ Logs: `journalctl -u zm2-api -f`
 ## Removed Features (vs upstream PM2)
 
 - **No daemon** — CLI talks directly to systemd
-- **No fork/cluster mode** — all apps run as `Type=simple` systemd services
+- **No fork/cluster mode or multi-instance creation** — one `Type=simple` service per app; `-i`/`instances` accepted but normalized to 1. Legacy template activation/update/startup is rejected; stop/delete/unstartup remain available. Existing units are not automatically stopped or disabled.
 - **No custom log files** — journald handles all logging
 - **No file watching** — removed chokidar and all watch CLI options/schema entries
 - **No pm2-plus** — removed @pm2/agent, @pm2/io, Keymetrics constants, dashboard URL generation

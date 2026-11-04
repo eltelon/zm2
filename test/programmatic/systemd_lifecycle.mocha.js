@@ -71,7 +71,7 @@ describe('Systemd lifecycle safety', function() {
     api.cwd = '/apps';
     api.pm2_configuration = {};
     api._handleAttributeUpdate = function(opts) { return opts; };
-    ['enable', 'disable', 'start', 'stop', 'restart', 'writeEnvFile', 'installUnit',
+    ['enable', 'disable', 'start', 'stop', 'restart', 'reload', 'writeEnvFile', 'installUnit',
       'daemonReload', 'installTimer', 'removeUnit', 'removeTemplateUnit'].forEach(function(method) {
       stub(Systemd, method, operation(method));
     });
@@ -181,11 +181,77 @@ describe('Systemd lifecycle safety', function() {
     });
   });
 
+  ['_startProcess', '_restartProcess', '_reloadProcess'].forEach(function(method) {
+    [
+      { serviceName: 'zm2-app', instances: 3 },
+      { serviceName: 'zm2-app@0', instances: 1 }
+    ].forEach(function(legacy) {
+      it('rejects ' + method + ' for legacy ' + legacy.serviceName + '/' + legacy.instances + ' before mutations', function(done) {
+        Object.assign(entry, legacy);
+        client[method]({ id: 7, env: { TOKEN: 'must-not-write' } }, function(err) {
+          try {
+            assert.strictEqual(err && err.code, 'ZM2_MULTI_INSTANCE_DISABLED');
+            assert.deepStrictEqual(calls, []);
+            assert.strictEqual(entry.instances, legacy.instances);
+            done();
+          } catch (e) { done(e); }
+        });
+      });
+    });
+  });
+
+  ['app', '7', 'production', 'all', '/apps/app.js', { name: 'app', script: '/apps/app.js', instances: 4 }].forEach(function(target) {
+    it('rejects public start on legacy via ' + JSON.stringify(target), function(done) {
+      entry.instances = 3;
+      api.start(target, { updateEnv: true }, function(err) {
+        try {
+          assert.strictEqual(err && err.code, 'ZM2_MULTI_INSTANCE_DISABLED');
+          assert.deepStrictEqual(calls, []);
+          done();
+        } catch (e) { done(e); }
+      });
+    });
+  });
+
+  it('normalizes direct prepare to a single base unit and metadata', function(done) {
+    var registered;
+    client.stateStore.get = function() { return registered || null; };
+    client.stateStore.register = function(name, metadata) {
+      registered = Object.assign({ serviceName: name, pm_id: 7 }, metadata);
+      return 7;
+    };
+    client._prepare({ name: 'app', script: '/apps/app.js', instances: 4, env: { INSTANCES: '4' } }, function(err) {
+      try {
+        assert.ifError(err);
+        assert.strictEqual(registered.instances, 1);
+        assert.deepStrictEqual(calls.map(function(c) { return c[0]; }), ['writeEnvFile', 'installUnit', 'enable', 'start']);
+        assert.ok(calls.every(function(c) { return c[1] === 'zm2-app'; }));
+        done();
+      } catch (e) { done(e); }
+    });
+  });
+
+  it('refuses prepare over an existing legacy group without touching files', function(done) {
+    entry.instances = 2;
+    client._prepare({ name: 'app', script: '/apps/app.js', instances: 1 }, function(err) {
+      try {
+        assert.strictEqual(err && err.code, 'ZM2_MULTI_INSTANCE_DISABLED');
+        assert.deepStrictEqual(calls, []);
+        done();
+      } catch (e) { done(e); }
+    });
+  });
+
   [1, 3].forEach(function(instances) {
-    it('enables all ' + instances + ' instances before returning start success', function(done) {
+    it(instances > 1 ? 'rejects legacy multi-instance start' : 'enables the single service before returning start success', function(done) {
       entry.instances = instances;
       client._startProcess({ id: 7 }, function(err, proc) {
         try {
+          if (instances > 1) {
+            assert.strictEqual(err && err.code, 'ZM2_MULTI_INSTANCE_DISABLED');
+            assert.deepStrictEqual(calls, []);
+            return done();
+          }
           assert.ifError(err);
           assert.strictEqual(calls.length, instances * 2);
           for (var i = 0; i < instances; i++) {
@@ -200,13 +266,18 @@ describe('Systemd lifecycle safety', function() {
     });
 
     ['enable', 'start'].forEach(function(method) {
-      it('propagates ' + method + ' failure for ' + instances + ' instance start', function(done) {
+      it(instances > 1 ? 'rejects legacy before ' + method : 'propagates ' + method + ' failure for single-service start', function(done) {
         entry.instances = instances;
         var error = new Error(method + ' denied');
         failure = { method: method, name: 'zm2-app' + (instances > 1 ? '@1' : ''), error: error };
         client._startProcess({ id: 7 }, function(err, result) {
           try {
-            assert.strictEqual(err, error);
+            if (instances > 1) {
+              assert.strictEqual(err && err.code, 'ZM2_MULTI_INSTANCE_DISABLED');
+              assert.deepStrictEqual(calls, []);
+            } else {
+              assert.strictEqual(err, error);
+            }
             assert.strictEqual(result, undefined);
             done();
           } catch (e) { done(e); }

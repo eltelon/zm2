@@ -87,7 +87,7 @@ export {del as delete};
 
 /**
  * Reload a process via systemctl reload-or-restart.
- * For template units (instances > 1), performs a rolling reload.
+ * Legacy multi-instance/template applications are rejected without changes.
  * @param process - Can either be the name, a process id, or “all”.
  * @param errback - called when the process is reloaded
  */
@@ -303,7 +303,7 @@ export interface Proc {
   axm_dynamic?: any;
   vizion_running?: boolean;
   created_at?: number;
-  pm_id?: number;
+  pm_id?: number | string;
   restart_time?: number;
   unstable_restarts?: number;
   started_inside?: boolean;
@@ -333,9 +333,9 @@ export interface ProcessDescription {
    */
   pid?: number;
   /**
-   * The pid for the pm2 God daemon process.
+   * Registered ZM2 ID, or a canonical unit name for a discovered unregistered service.
    */
-  pm_id?: number;
+  pm_id?: number | string;
   monit?: Monit;
   /**
    * The list of path variables in the process’s environment
@@ -385,7 +385,7 @@ interface Pm2Env {
   restart_time?: number;
   status?: ProcessStatus;
   /**
-   * The number of running instances.
+   * Registered instance count: one for new apps; legacy metadata may contain more.
    */
   instances?: number | 'max';
   /**
@@ -497,10 +497,10 @@ export interface StartOptions {
    */
   exec_mode?: string;
   /**
-   * (Default: 1) How many instances of script to create.
-   * Creates systemd template units for N > 1.
+   * Compatibility input; ZM2 always creates one service per application.
+   * Values other than 1 are ignored with a warning.
    */
-  instances?: number;
+  instances?: number | 'max';
   /**
    * (Default: false) If true, merges the log files for all instances of script into one stderr log
    * and one stdout log. Only applies in ‘cluster’ mode. For example, if you have 4 instances of
@@ -550,11 +550,11 @@ export interface StartOptions {
    */
   shutdown_with_message?: boolean;
   /**
-   * Environment variable name that gets incremented for each cluster instance.
+   * Legacy compatibility option; ZM2 does not increment environment variables.
    */
   increment_var?: string;
   /**
-   * Name of the environment variable holding the instance ID.
+   * Legacy template instance variable; not injected into new single services.
    * @default 'NODE_APP_INSTANCE'
    */
   instance_var?: string;

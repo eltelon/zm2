@@ -1317,6 +1317,92 @@ describe('NodeRuntimeUpdater', function() {
     });
   });
 
+  describe('single-instance policy guards', function() {
+    function assertNoSideEffects(h) {
+      assert.deepStrictEqual(h.runtimeConfig.calls.inspect, []);
+      assert.deepStrictEqual(h.runtimeConfig.calls.plan, []);
+      assert.deepStrictEqual(h.runtimeConfig.calls.apply, []);
+      assert.deepStrictEqual(h.runtimeConfig.calls.restore, []);
+      assert.deepStrictEqual(h.nvm.calls.prepare, []);
+      assert.deepStrictEqual(callsOfType(h.systemd, 'getStatus'), []);
+      assert.deepStrictEqual(restartNames(h.systemd), []);
+      assert.deepStrictEqual(h.verifier.calls, []);
+      assert.deepStrictEqual(h.stateStore.replaceCalls, []);
+    }
+
+    it('rejects a legacy instance count before inspection and never prepares nvm', async function() {
+      var h = createHarness({
+        entries: [makeEntry({ instances: 2 })]
+      });
+
+      var report = await h.updater.run('20.11.1');
+
+      assert.strictEqual(report.results[0].status, 'failed_unchanged');
+      assert.match(report.results[0].reason, /instance|single|multi|recreate|disable/i);
+      assert.deepStrictEqual(report.totals, {
+        updated: 0,
+        skipped: 0,
+        failed: 1,
+        notUpdated: 0
+      });
+      assert.strictEqual(report.runtime, null);
+      assert.strictEqual(report.exitCode, 1);
+      assertNoSideEffects(h);
+    });
+
+    it('rejects an instance alias while continuing to update eligible singles', async function() {
+      var h = createHarness({
+        entries: [
+          makeEntry({ serviceName: 'zm2-legacy@1', name: 'legacy' }),
+          makeEntry({ serviceName: 'zm2-live', name: 'live' })
+        ]
+      });
+
+      var report = await h.updater.run('20.11.1');
+
+      assert.deepStrictEqual(report.results.map(function(row) {
+        return row.status;
+      }), ['failed_unchanged', 'updated']);
+      assert.match(report.results[0].reason, /instance|single|multi|recreate|disable/i);
+      assert.deepStrictEqual(h.runtimeConfig.calls.inspect, ['zm2-live']);
+      assert.deepStrictEqual(h.runtimeConfig.calls.apply, ['zm2-live']);
+      assert.deepStrictEqual(h.nvm.calls.prepare, ['20.11.1']);
+      assert.deepStrictEqual(restartNames(h.systemd), ['zm2-live']);
+      assert.deepStrictEqual(replaceNames(h.stateStore), ['zm2-live']);
+      assert.strictEqual(report.exitCode, 1);
+    });
+
+    it('rejects an orphaned template file before preparing a runtime', async function() {
+      var h = createHarness({
+        entries: [makeEntry()]
+      });
+      writeFile(path.join(h.unitDir, 'zm2-app@.service'), '[Service]\n');
+
+      var report = await h.updater.run('20.11.1');
+
+      assert.strictEqual(report.results[0].status, 'failed_unchanged');
+      assert.match(report.results[0].reason, /template|instance|single|multi/i);
+      assert.strictEqual(report.runtime, null);
+      assert.strictEqual(report.exitCode, 1);
+      assertNoSideEffects(h);
+    });
+
+    it('rejects legacy entries identically when rollback is disabled', async function() {
+      var h = createHarness({
+        rollback: false,
+        entries: [makeEntry({ instances: 3 })]
+      });
+
+      var report = await h.updater.run('20.11.1');
+
+      assert.strictEqual(report.results[0].status, 'failed_unchanged');
+      assert.match(report.results[0].reason, /instance|single|multi|recreate|disable/i);
+      assert.strictEqual(report.runtime, null);
+      assert.strictEqual(report.exitCode, 1);
+      assertNoSideEffects(h);
+    });
+  });
+
   describe('invalid units and states', function() {
     it('reports a missing unit and continues with the next application', async function() {
       var snapshots = {};
@@ -1403,13 +1489,12 @@ describe('NodeRuntimeUpdater', function() {
     it('rejects transitional and failed instances without restarting them', async function() {
       var h = createHarness({
         entries: [
-          makeEntry({ serviceName: 'zm2-transitional', name: 'transitional', instances: 2 }),
+          makeEntry({ serviceName: 'zm2-transitional', name: 'transitional' }),
           makeEntry({ serviceName: 'zm2-failed', name: 'failed', instances: 1 })
         ],
         systemdOptions: {
           statuses: {
-            'zm2-transitional@0': activeStatus(),
-            'zm2-transitional@1': { ActiveState: 'activating', SubState: 'start' },
+            'zm2-transitional': { ActiveState: 'activating', SubState: 'start' },
             'zm2-failed': { ActiveState: 'failed', SubState: 'failed' }
           }
         }
@@ -1418,7 +1503,7 @@ describe('NodeRuntimeUpdater', function() {
       var report = await h.updater.run('20.11.1');
 
       assert.strictEqual(report.results[0].status, 'failed_unchanged');
-      assert.match(report.results[0].reason, /zm2-transitional@1|activating/i);
+      assert.match(report.results[0].reason, /zm2-transitional|activating/i);
       assert.strictEqual(report.results[1].status, 'failed_unchanged');
       assert.match(report.results[1].reason, /zm2-failed|failed/i);
       assert.deepStrictEqual(h.nvm.calls.prepare, []);
@@ -1508,83 +1593,22 @@ describe('NodeRuntimeUpdater', function() {
   });
 
   describe('happy path', function() {
-    it('applies, reloads, restarts and verifies each active instance sequentially', async function() {
+    it('rejects an active legacy template before applying configuration', async function() {
       var h = createHarness({
         entries: [makeEntry({ instances: 2 })],
         planChanged: true
       });
-      var gate = deferred();
 
-      h.verifier.verify = function(name, executable) {
-        h.verifier.calls.push({ name: name, executable: executable });
-        if (name === 'zm2-app@0') return gate.promise;
-      };
+      var report = await h.updater.run('20.11.1');
 
-      var runPromise = h.updater.run('20.11.1');
-
-      await waitFor(function() {
-        return h.verifier.calls.length === 1;
-      });
-
-      assert.deepStrictEqual(restartNames(h.systemd), ['zm2-app@0']);
-      assert.deepStrictEqual(verifyNames(h.verifier), ['zm2-app@0']);
-
-      gate.resolve();
-      var report = await runPromise;
-
-      assert.strictEqual(report.globalError, null);
-      assert.strictEqual(report.runtime.version, '20.11.1');
-      assert.strictEqual(report.runtime.executable, h.newExecutable);
-      assert.strictEqual(report.runtime.binDir, path.dirname(h.newExecutable));
-      assert.deepStrictEqual(report.totals, {
-        updated: 1,
-        skipped: 0,
-        failed: 0,
-        notUpdated: 0
-      });
-      assert.strictEqual(report.exitCode, 0);
-      assert.deepStrictEqual(Object.keys(report).sort(), reportKeys());
-
-      var row = report.results[0];
-      assert.deepStrictEqual(Object.keys(row).sort(), rowKeys());
-      assert.strictEqual(row.serviceName, 'zm2-app');
-      assert.strictEqual(row.name, 'app');
-      assert.strictEqual(row.previousVersion, '20.11.1');
-      assert.strictEqual(row.status, 'updated');
-      assert.strictEqual(row.stopped, false);
-      assert.strictEqual(row.startupVerified, true);
-      assert.strictEqual(row.reason, null);
-      assert.deepStrictEqual(row.errors, []);
-      assert.deepStrictEqual(row.rollbackErrors, []);
-
-      assert.deepStrictEqual(h.runtimeConfig.calls.plan, ['zm2-app']);
-      assert.deepStrictEqual(h.runtimeConfig.calls.apply, ['zm2-app']);
-      assert.deepStrictEqual(restartNames(h.systemd), ['zm2-app@0', 'zm2-app@1']);
-      assert.deepStrictEqual(verifyNames(h.verifier), ['zm2-app@0', 'zm2-app@1']);
-      h.verifier.calls.forEach(function(call) {
-        assert.strictEqual(call.executable, h.newExecutable);
-      });
-      assert.strictEqual(callsOfType(h.systemd, 'daemonReload').length, 1);
-
-      assert.deepStrictEqual(h.stateStore.registerCalls, []);
-      assert.strictEqual(h.stateStore.replaceCalls.length, 1);
-      var replaceCall = h.stateStore.replaceCalls[0];
-      assert.strictEqual(replaceCall.serviceName, 'zm2-app');
-      assert.strictEqual(replaceCall.metadata.exec_interpreter, h.newExecutable);
-      assert.strictEqual(replaceCall.metadata.pm_id, 1);
-      assert.strictEqual(replaceCall.metadata.name, 'app');
-      assert.strictEqual(replaceCall.metadata.script, '/srv/app/main.js');
-      assert.strictEqual(replaceCall.metadata.cwd, '/srv/app');
-      assert.strictEqual(replaceCall.metadata.created_at, 100);
-      assert.strictEqual(replaceCall.metadata.custom, 'keep-me');
-      assert.strictEqual(
-        Object.prototype.hasOwnProperty.call(replaceCall.metadata, 'serviceName'),
-        false
-      );
-
-      assert.deepStrictEqual(restartNames(h.systemd).filter(function(name) {
-        return name !== 'zm2-app@0' && name !== 'zm2-app@1';
-      }), []);
+      assert.strictEqual(report.results[0].status, 'failed_unchanged');
+      assert.match(report.results[0].reason, /instance|single|multi|recreate|disable/i);
+      assert.deepStrictEqual(h.runtimeConfig.calls.inspect, []);
+      assert.deepStrictEqual(h.runtimeConfig.calls.apply, []);
+      assert.deepStrictEqual(h.nvm.calls.prepare, []);
+      assert.deepStrictEqual(restartNames(h.systemd), []);
+      assert.deepStrictEqual(h.verifier.calls, []);
+      assert.strictEqual(report.exitCode, 1);
     });
 
     it('updates a stopped application without starting or verifying it', async function() {
@@ -1613,7 +1637,7 @@ describe('NodeRuntimeUpdater', function() {
       assert.strictEqual(report.exitCode, 0);
     });
 
-    it('handles mixed template statuses and applies shared configuration once', async function() {
+    it('rejects a legacy template with mixed statuses without querying systemd', async function() {
       var h = createHarness({
         entries: [makeEntry({ instances: 3 })],
         planChanged: true,
@@ -1629,17 +1653,15 @@ describe('NodeRuntimeUpdater', function() {
       var report = await h.updater.run('20.11.1');
 
       var row = report.results[0];
-      assert.strictEqual(row.status, 'updated');
-      assert.strictEqual(row.stopped, false);
-      assert.strictEqual(row.startupVerified, true);
-      assert.match(row.reason, /zm2-app@1/);
-      assert.match(row.reason, /not started|not verified/i);
-      assert.deepStrictEqual(h.runtimeConfig.calls.apply, ['zm2-app']);
-      assert.strictEqual(callsOfType(h.systemd, 'daemonReload').length, 1);
-      assert.deepStrictEqual(restartNames(h.systemd), ['zm2-app@0', 'zm2-app@2']);
-      assert.deepStrictEqual(verifyNames(h.verifier), ['zm2-app@0', 'zm2-app@2']);
-      assert.strictEqual(h.stateStore.replaceCalls.length, 1);
-      assert.strictEqual(report.exitCode, 0);
+      assert.strictEqual(row.status, 'failed_unchanged');
+      assert.match(row.reason, /instance|single|multi|recreate|disable/i);
+      assert.deepStrictEqual(h.runtimeConfig.calls.apply, []);
+      assert.deepStrictEqual(h.nvm.calls.prepare, []);
+      assert.deepStrictEqual(callsOfType(h.systemd, 'getStatus'), []);
+      assert.deepStrictEqual(restartNames(h.systemd), []);
+      assert.deepStrictEqual(h.verifier.calls, []);
+      assert.strictEqual(h.stateStore.replaceCalls.length, 0);
+      assert.strictEqual(report.exitCode, 1);
     });
 
     it('skips without restarting when the runtime is already configured', async function() {
@@ -1889,34 +1911,24 @@ describe('NodeRuntimeUpdater', function() {
       assert.strictEqual(report.exitCode, 1);
     });
 
-    it('attempts all active template instances after failures and leaves stopped instances alone', async function() {
+    it('rejects a legacy template without rollback while updating eligible singles', async function() {
       var h = createHarness({
         rollback: false,
-        entries: [makeEntry({ instances: 4 }), makeEntry({ serviceName: 'zm2-next', name: 'next' })],
-        systemdOptions: {
-          statuses: { 'zm2-app@3': inactiveStatus() },
-          restartError: function(name) {
-            return name === 'zm2-app@0' ? new Error('restart rejected') : null;
-          }
-        },
-        verifierOptions: {
-          verifyError: function(name) {
-            return name === 'zm2-app@1' ? new Error('unstable PID') : null;
-          }
-        }
+        entries: [makeEntry({ instances: 4 }), makeEntry({ serviceName: 'zm2-next', name: 'next' })]
       });
 
       var report = await h.updater.run('20.11.1');
 
-      assert.deepStrictEqual(restartNames(h.systemd), ['zm2-app@0', 'zm2-app@1', 'zm2-app@2', 'zm2-next']);
-      assert.deepStrictEqual(verifyNames(h.verifier), ['zm2-app@1', 'zm2-app@2', 'zm2-next']);
+      assert.deepStrictEqual(report.results.map(function(row) {
+        return row.status;
+      }), ['failed_unchanged', 'updated']);
+      assert.match(report.results[0].reason, /instance|single|multi|recreate|disable/i);
+      assert.deepStrictEqual(h.runtimeConfig.calls.inspect, ['zm2-next']);
+      assert.deepStrictEqual(h.runtimeConfig.calls.apply, ['zm2-next']);
       assert.deepStrictEqual(h.runtimeConfig.calls.restore, []);
-      assert.strictEqual(report.results[0].status, 'failed_no_rollback');
-      assert.strictEqual(report.results[0].errors.length, 2);
-      assert.match(report.results[0].errors[0], /zm2-app@0/);
-      assert.match(report.results[0].errors[1], /zm2-app@1/);
-      assert.strictEqual(report.results[1].status, 'updated');
-      assert.strictEqual(h.stateStore.get('zm2-app').exec_interpreter, h.newExecutable);
+      assert.deepStrictEqual(restartNames(h.systemd), ['zm2-next']);
+      assert.deepStrictEqual(replaceNames(h.stateStore), ['zm2-next']);
+      assert.strictEqual(h.stateStore.get('zm2-app').exec_interpreter, 'node');
       assert.strictEqual(report.exitCode, 1);
     });
 
@@ -2265,49 +2277,21 @@ describe('NodeRuntimeUpdater', function() {
       assert.strictEqual(report.exitCode, 1);
     });
 
-    it('rolls back the shared template and every originally active instance', async function() {
+    it('rejects a legacy instance alias before any rollback work', async function() {
       var h = createHarness({
-        entries: [makeEntry({ instances: 3 })],
-        planChanged: true,
-        systemdOptions: {
-          statuses: {
-            'zm2-app@0': activeStatus(),
-            'zm2-app@1': inactiveStatus(),
-            'zm2-app@2': activeStatus()
-          }
-        }
+        entries: [makeEntry({ serviceName: 'zm2-app@1', name: 'app' })],
+        planChanged: true
       });
-
-      h.verifier.verify = function(name, executable) {
-        h.verifier.calls.push({ name: name, executable: executable });
-        if (executable === h.newExecutable && name === 'zm2-app@2') {
-          throw new Error('instance two failed to start');
-        }
-      };
 
       var report = await h.updater.run('20.11.1');
 
       var row = report.results[0];
-      assert.strictEqual(row.status, 'failed_restored');
-      assert.match(row.errors[0], /zm2-app@2/);
-      assert.deepStrictEqual(row.rollbackErrors, []);
-      assert.strictEqual(row.startupVerified, true);
-      assert.deepStrictEqual(h.runtimeConfig.calls.apply, ['zm2-app']);
-      assert.deepStrictEqual(h.runtimeConfig.calls.restore, ['zm2-app']);
-      assert.deepStrictEqual(restartNames(h.systemd), [
-        'zm2-app@0', 'zm2-app@2', 'zm2-app@0', 'zm2-app@2'
-      ]);
-      assert.deepStrictEqual(h.verifier.calls, [
-        { name: 'zm2-app@0', executable: h.newExecutable },
-        { name: 'zm2-app@2', executable: h.newExecutable },
-        { name: 'zm2-app@0', executable: h.oldExecutable },
-        { name: 'zm2-app@2', executable: h.oldExecutable }
-      ]);
-      assert.strictEqual(restartNames(h.systemd).indexOf('zm2-app@1'), -1);
-      assert.strictEqual(verifyNames(h.verifier).indexOf('zm2-app@1'), -1);
-      assert.deepStrictEqual(stopNames(h.systemd), []);
-      assert.deepStrictEqual(replaceNames(h.stateStore), ['zm2-app']);
-      assert.deepStrictEqual(h.stateStore.replaceCalls[0].metadata, storedMetadata(h.entries[0]));
+      assert.strictEqual(row.status, 'failed_unchanged');
+      assert.match(row.reason, /instance|single|multi|recreate|disable/i);
+      assert.deepStrictEqual(h.runtimeConfig.calls.apply, []);
+      assert.deepStrictEqual(h.runtimeConfig.calls.restore, []);
+      assert.deepStrictEqual(h.nvm.calls.prepare, []);
+      assert.deepStrictEqual(restartNames(h.systemd), []);
       assert.strictEqual(report.exitCode, 1);
     });
 
@@ -2338,26 +2322,26 @@ describe('NodeRuntimeUpdater', function() {
       assert.strictEqual(report.exitCode, 1);
     });
 
-    it('keeps recovering other instances when reset-failed fails', async function() {
+    it('keeps updating the next application when reset-failed fails', async function() {
       var restartCounts = {};
       var h = createHarness({
         entries: [
-          makeEntry({ instances: 2 }),
+          makeEntry(),
           makeEntry({ serviceName: 'zm2-next', name: 'next' })
         ],
         planChanged: true,
         systemdOptions: {
           restart: function(name) {
             restartCounts[name] = (restartCounts[name] || 0) + 1;
-            if (name === 'zm2-app@1' && restartCounts[name] === 1) {
-              throw new Error('instance one failed to start');
+            if (name === 'zm2-app' && restartCounts[name] === 1) {
+              throw new Error('unit failed to start');
             }
-            if (name === 'zm2-app@0' && restartCounts[name] === 2) {
+            if (name === 'zm2-app' && restartCounts[name] === 2) {
               throw new Error('Start request repeated too quickly.');
             }
           },
           resetFailedError: function(name) {
-            return name === 'zm2-app@0' ? new Error('reset failed') : null;
+            return name === 'zm2-app' ? new Error('reset failed') : null;
           }
         }
       });
@@ -2370,13 +2354,9 @@ describe('NodeRuntimeUpdater', function() {
 
       var row = report.results[0];
       assert.strictEqual(row.rollbackErrors.length, 1);
-      assert.match(row.rollbackErrors[0], /recover instance zm2-app@0: reset failed/);
-      assert.deepStrictEqual(restartNames(h.systemd), [
-        'zm2-app@0', 'zm2-app@1', 'zm2-app@0', 'zm2-app@1', 'zm2-next'
-      ]);
+      assert.match(row.rollbackErrors[0], /recover instance zm2-app: reset failed/);
+      assert.deepStrictEqual(restartNames(h.systemd), ['zm2-app', 'zm2-app', 'zm2-next']);
       assert.deepStrictEqual(h.verifier.calls, [
-        { name: 'zm2-app@0', executable: h.newExecutable },
-        { name: 'zm2-app@1', executable: h.oldExecutable },
         { name: 'zm2-next', executable: h.newExecutable }
       ]);
       assert.strictEqual(report.exitCode, 1);
@@ -2475,18 +2455,18 @@ describe('NodeRuntimeUpdater', function() {
       assert.strictEqual(report.exitCode, 1);
     });
 
-    it('aggregates a recovery restart failure and keeps recovering other instances', async function() {
+    it('aggregates a recovery restart failure and keeps updating the next application', async function() {
       var restartCounts = {};
       var h = createHarness({
         entries: [
-          makeEntry({ instances: 2 }),
+          makeEntry(),
           makeEntry({ serviceName: 'zm2-next', name: 'next' })
         ],
         planChanged: true,
         systemdOptions: {
           restart: function(name) {
             restartCounts[name] = (restartCounts[name] || 0) + 1;
-            if (name === 'zm2-app@0' && restartCounts[name] === 2) {
+            if (name === 'zm2-app' && restartCounts[name] === 2) {
               throw new Error('recovery restart failed');
             }
           }
@@ -2495,7 +2475,7 @@ describe('NodeRuntimeUpdater', function() {
 
       h.verifier.verify = function(name, executable) {
         h.verifier.calls.push({ name: name, executable: executable });
-        if (executable === h.newExecutable && name === 'zm2-app@1') {
+        if (executable === h.newExecutable && name === 'zm2-app') {
           throw new Error('new runtime is unstable');
         }
       };
@@ -2508,14 +2488,10 @@ describe('NodeRuntimeUpdater', function() {
 
       var row = report.results[0];
       assert.strictEqual(row.rollbackErrors.length, 1);
-      assert.match(row.rollbackErrors[0], /recover instance zm2-app@0: recovery restart failed/);
-      assert.deepStrictEqual(restartNames(h.systemd), [
-        'zm2-app@0', 'zm2-app@1', 'zm2-app@0', 'zm2-app@1', 'zm2-next'
-      ]);
+      assert.match(row.rollbackErrors[0], /recover instance zm2-app: recovery restart failed/);
+      assert.deepStrictEqual(restartNames(h.systemd), ['zm2-app', 'zm2-app', 'zm2-next']);
       assert.deepStrictEqual(h.verifier.calls, [
-        { name: 'zm2-app@0', executable: h.newExecutable },
-        { name: 'zm2-app@1', executable: h.newExecutable },
-        { name: 'zm2-app@1', executable: h.oldExecutable },
+        { name: 'zm2-app', executable: h.newExecutable },
         { name: 'zm2-next', executable: h.newExecutable }
       ]);
       assert.strictEqual(report.exitCode, 1);
@@ -2524,7 +2500,7 @@ describe('NodeRuntimeUpdater', function() {
     it('aggregates a recovery verification failure and continues with the next application', async function() {
       var h = createHarness({
         entries: [
-          makeEntry({ instances: 2 }),
+          makeEntry(),
           makeEntry({ serviceName: 'zm2-next', name: 'next' })
         ],
         planChanged: true
@@ -2532,10 +2508,10 @@ describe('NodeRuntimeUpdater', function() {
 
       h.verifier.verify = function(name, executable) {
         h.verifier.calls.push({ name: name, executable: executable });
-        if (executable === h.newExecutable && name === 'zm2-app@1') {
+        if (executable === h.newExecutable && name === 'zm2-app') {
           throw new Error('new runtime is unstable');
         }
-        if (executable === h.oldExecutable && name === 'zm2-app@0') {
+        if (executable === h.oldExecutable && name === 'zm2-app') {
           throw new Error('old runtime is unstable');
         }
       };
@@ -2548,12 +2524,10 @@ describe('NodeRuntimeUpdater', function() {
 
       var row = report.results[0];
       assert.strictEqual(row.rollbackErrors.length, 1);
-      assert.match(row.rollbackErrors[0], /recover instance zm2-app@0: old runtime is unstable/);
-      assert.deepStrictEqual(restartNames(h.systemd), [
-        'zm2-app@0', 'zm2-app@1', 'zm2-app@0', 'zm2-app@1', 'zm2-next'
-      ]);
+      assert.match(row.rollbackErrors[0], /recover instance zm2-app: old runtime is unstable/);
+      assert.deepStrictEqual(restartNames(h.systemd), ['zm2-app', 'zm2-app', 'zm2-next']);
       assert.deepStrictEqual(verifyNames(h.verifier), [
-        'zm2-app@0', 'zm2-app@1', 'zm2-app@0', 'zm2-app@1', 'zm2-next'
+        'zm2-app', 'zm2-app', 'zm2-next'
       ]);
       assert.strictEqual(report.exitCode, 1);
     });

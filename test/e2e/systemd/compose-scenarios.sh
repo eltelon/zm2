@@ -8,7 +8,8 @@
 #
 # Phases:
 #   backend       guards + real PID 1/systemctl/journald/cgroup checks
-#   lifecycle     Express start/stop/start, restart, enabled state, logs, modes
+#   lifecycle     Express start/stop/start, restart, enabled state, logs, modes,
+#                 single-instance counts and legacy template rejection
 #   prepare-boot  create enabled + stopped apps and snapshot boot evidence
 #   verify-boot   assert systemd auto-start and preserved files after restart
 #   no-rollback   update-node --no-rollback keeps target config on failure
@@ -83,6 +84,22 @@ PORT_NR_STOPPED=3105
 APP_DELETE="$APP_PREFIX-delete"
 SVC_DELETE="$SVC_PREFIX-delete"
 PORT_DELETE=3106
+
+APP_SINGLE_FLAG="$APP_PREFIX-single-flag"
+SVC_SINGLE_FLAG="$SVC_PREFIX-single-flag"
+PORT_SINGLE_FLAG=3107
+
+APP_SINGLE_MAX="$APP_PREFIX-single-max"
+SVC_SINGLE_MAX="$SVC_PREFIX-single-max"
+PORT_SINGLE_MAX=3108
+
+APP_SINGLE_ECO="$APP_PREFIX-single-ecosystem"
+SVC_SINGLE_ECO="$SVC_PREFIX-single-ecosystem"
+PORT_SINGLE_ECO=3109
+
+APP_LEGACY="$APP_PREFIX-legacy"
+SVC_LEGACY="$SVC_PREFIX-legacy"
+LEGACY_UPDATE_HOME=""
 
 CONCURRENT_COUNT=3
 CONCURRENT_APPS=()
@@ -869,6 +886,218 @@ assert_state_metadata() {
 }
 
 # ---------------------------------------------------------------------------
+# Single-instance and legacy fixture helpers
+# ---------------------------------------------------------------------------
+
+assert_only_single_unit() {
+  local label="$1"
+  local svc="$2"
+  local files
+
+  files="$(find "$UNIT_DIR" -maxdepth 1 -name "$svc*.service" -printf '%f\n' 2>/dev/null | sort)"
+  [[ "$files" == "$svc.service" ]] \
+    || fail "$label: expected only $svc.service, found: ${files:-none}"
+  [[ ! -e "$UNIT_DIR/$svc@.service" ]] \
+    || fail "$label: template unit unexpectedly exists: $UNIT_DIR/$svc@.service"
+  [[ -z "$(systemctl list-units --all --no-legend --no-pager "$svc@*.service" 2>/dev/null || true)" ]] \
+    || fail "$label: template instances are loaded"
+  [[ -z "$(find "$WANTS_DIR" -maxdepth 1 -name "$svc@*.service" -print -quit 2>/dev/null || true)" ]] \
+    || fail "$label: template enablement symlink exists"
+}
+
+assert_single_warning() {
+  local label="$1"
+  local log="$2"
+
+  [[ -s "$log" ]] || fail "$label: command log is empty: $log"
+  grep -Eqi 'single[- ]instance|only one instance|instances?[^.]*(ignored|disabled)' "$log" \
+    || fail "$label: missing single-instance warning in $log"
+}
+
+assert_single_instance_app() {
+  local label="$1"
+  local home="$2"
+  local app="$3"
+  local svc="$4"
+  local port="$5"
+  local health="$6"
+  local pid
+
+  assert_express_active "$home" "$app" "$svc" "$port" "$OLD_NODE" "$OLD_VERSION" "$health" "$label"
+  assert_state_metadata "$label" "$home" "$app" "$svc" "$FIXTURE" "$FIXTURE_DIR"
+  assert_only_single_unit "$label" "$svc"
+  assert_env_path_prefixed "$label" "$(env_path_for "$svc")" "$OLD_BIN"
+  pid="$(unit_pid "$svc")"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || fail "$label: expected a positive MainPID, got '$pid'"
+}
+
+delete_scenario_app() {
+  local label="$1"
+  local app="$2"
+  local svc="$3"
+  local log="$EVIDENCE_DIR/lifecycle/delete-$svc.log"
+
+  run_zm2 delete "$app" > "$log" 2>&1
+  [[ ! -e "$(unit_path_for "$svc")" ]] || fail "$label: unit file still exists after delete"
+  [[ ! -e "$UNIT_DIR/$svc@.service" ]] || fail "$label: template unit still exists after delete"
+  [[ ! -e "$(env_path_for "$svc")" ]] || fail "$label: environment file still exists after delete"
+  [[ ! -L "$WANTS_DIR/$svc.service" ]] || fail "$label: enablement symlink still exists after delete"
+  if state_has_service "$ZM2_HOME" "$svc"; then
+    fail "$label: StateStore entry still exists after delete"
+  fi
+  [[ -z "$(systemctl list-units --all --no-legend --no-pager "$svc@*.service" 2>/dev/null || true)" ]] \
+    || fail "$label: template instances remain loaded after delete"
+}
+
+runtime_signature() {
+  local file="$1"
+
+  if [[ -e "$file" ]]; then
+    stat -Lc 'present size=%s mtime=%Y inode=%i' -- "$file"
+  else
+    printf 'absent\n'
+  fi
+}
+
+write_legacy_state() {
+  local home="$1"
+
+  mkdir -p "$home"
+  chmod 700 "$home"
+  ZM2_REPO="$ZM2_REPO" LEGACY_HOME="$home" LEGACY_APP="$APP_LEGACY" \
+    LEGACY_SVC="$SVC_LEGACY" LEGACY_SCRIPT="$STABLE_FIXTURE" \
+    LEGACY_CWD="$STABLE_DIR" LEGACY_NODE="$OLD_NODE" "$CLI_NODE" -e '
+    var path = require("path");
+    var StateStore = require(path.join(process.env.ZM2_REPO, "lib/Systemd/StateStore.js"));
+    var store = new StateStore(path.join(process.env.LEGACY_HOME, "state.json"));
+    store.register(process.env.LEGACY_SVC, {
+      name: process.env.LEGACY_APP,
+      script: process.env.LEGACY_SCRIPT,
+      cwd: process.env.LEGACY_CWD,
+      namespace: "default",
+      instances: 2,
+      exec_interpreter: process.env.LEGACY_NODE,
+      node_args: [],
+      args: [],
+      version: "N/A"
+    });
+  '
+}
+
+create_legacy_fixture() {
+  local home="$1"
+
+  info "Creating legacy template fixture $SVC_LEGACY (instances=2)"
+  ZM2_REPO="$ZM2_REPO" LEGACY_APP="$APP_LEGACY" LEGACY_SVC="$SVC_LEGACY" \
+    LEGACY_SCRIPT="$STABLE_FIXTURE" LEGACY_CWD="$STABLE_DIR" \
+    LEGACY_NODE="$OLD_NODE" LEGACY_RUN_ID="$RUN_ID" "$CLI_NODE" -e '
+    var fs = require("fs");
+    var path = require("path");
+    var UnitGenerator = require(path.join(process.env.ZM2_REPO, "lib/Systemd/UnitGenerator.js"));
+    var conf = {
+      name: process.env.LEGACY_APP,
+      script: process.env.LEGACY_SCRIPT,
+      pm_cwd: process.env.LEGACY_CWD,
+      cwd: process.env.LEGACY_CWD,
+      exec_interpreter: process.env.LEGACY_NODE,
+      env: { ZM2_COMPOSE_E2E_RUN_ID: process.env.LEGACY_RUN_ID }
+    };
+    var svc = process.env.LEGACY_SVC;
+    fs.mkdirSync("/etc/zm2/env", { recursive: true, mode: 0o700 });
+    fs.writeFileSync("/etc/systemd/system/" + svc + "@.service",
+      UnitGenerator.generate(conf, { isTemplate: true }), { mode: 0o644 });
+    fs.writeFileSync("/etc/zm2/env/" + svc + ".env",
+      UnitGenerator.generateEnvFile(conf), { mode: 0o600 });
+  '
+
+  write_legacy_state "$home"
+  systemctl daemon-reload
+  systemctl enable "$SVC_LEGACY@0.service" "$SVC_LEGACY@1.service" >/dev/null
+  systemctl start "$SVC_LEGACY@0.service" "$SVC_LEGACY@1.service"
+  wait_active "$SVC_LEGACY@0"
+  wait_active "$SVC_LEGACY@1"
+  assert_state_value "legacy fixture" "$home" "$SVC_LEGACY" instances 2
+}
+
+assert_legacy_snapshot_unchanged() {
+  local label="$1"
+  local home="$2"
+  local unit_sha="$3"
+  local env_sha="$4"
+  local state_sha="$5"
+  local pid0="$6"
+  local pid1="$7"
+  local enabled1="${8:-1}"
+
+  assert_enabled_state "$label instance 0" "$SVC_LEGACY@0" 1
+  assert_enabled_state "$label instance 1" "$SVC_LEGACY@1" "$enabled1"
+  [[ "$(sha256_file "$UNIT_DIR/$SVC_LEGACY@.service")" == "$unit_sha" ]] \
+    || fail "$label: legacy template unit changed"
+  [[ "$(sha256_file "$(env_path_for "$SVC_LEGACY")")" == "$env_sha" ]] \
+    || fail "$label: legacy environment file changed"
+  [[ "$(state_entry_sha "$home" "$SVC_LEGACY")" == "$state_sha" ]] \
+    || fail "$label: legacy StateStore entry changed"
+  [[ "$(unit_pid "$SVC_LEGACY@0")" == "$pid0" ]] \
+    || fail "$label: legacy instance 0 MainPID changed"
+  [[ "$(unit_pid "$SVC_LEGACY@1")" == "$pid1" ]] \
+    || fail "$label: legacy instance 1 MainPID changed"
+}
+
+run_legacy_rejection() {
+  local label="$1"
+  local log="$2"
+  local rc
+  shift 2
+
+  if "$@" > "$log" 2>&1; then rc=0; else rc=$?; fi
+  [[ "$rc" -eq 1 ]] || fail "$label: expected exit 1, got $rc"
+  grep -Eqi 'multi-instance|single-instance' "$log" \
+    || fail "$label: output does not mention disabled multi-instance support"
+}
+
+assert_legacy_absent() {
+  local label="$1"
+
+  [[ ! -e "$UNIT_DIR/$SVC_LEGACY@.service" ]] \
+    || fail "$label: template unit still exists"
+  [[ ! -e "$(unit_path_for "$SVC_LEGACY")" ]] \
+    || fail "$label: base unit still exists"
+  [[ ! -e "$(env_path_for "$SVC_LEGACY")" ]] \
+    || fail "$label: environment file still exists"
+  [[ -z "$(systemctl list-unit-files --no-legend --no-pager "$SVC_LEGACY@*.service" 2>/dev/null || true)" ]] \
+    || fail "$label: systemd still knows template instances"
+  [[ -z "$(find "$WANTS_DIR" -maxdepth 1 -name "$SVC_LEGACY@*.service" -print -quit 2>/dev/null || true)" ]] \
+    || fail "$label: template enablement symlink still exists"
+  if state_has_service "$ZM2_HOME" "$SVC_LEGACY"; then
+    fail "$label: StateStore entry still exists"
+  fi
+}
+
+remove_legacy_update_home() {
+  local keys
+
+  [[ -d "$LEGACY_UPDATE_HOME" ]] || return 0
+  if [[ -f "$(state_file_for "$LEGACY_UPDATE_HOME")" ]]; then
+    ZM2_REPO="$ZM2_REPO" LEGACY_HOME="$LEGACY_UPDATE_HOME" LEGACY_SVC="$SVC_LEGACY" \
+      "$CLI_NODE" -e '
+      var path = require("path");
+      var StateStore = require(path.join(process.env.ZM2_REPO, "lib/Systemd/StateStore.js"));
+      new StateStore(path.join(process.env.LEGACY_HOME, "state.json"))
+        .unregister(process.env.LEGACY_SVC);
+    ' >/dev/null 2>&1 || true
+    if ! keys="$(state_keys "$LEGACY_UPDATE_HOME")"; then
+      warn "cannot parse legacy update home state; leaving $LEGACY_UPDATE_HOME"
+      return 1
+    fi
+    if [[ -n "$keys" ]]; then
+      warn "legacy update home still has services; leaving $LEGACY_UPDATE_HOME"
+      return 1
+    fi
+  fi
+  rm -rf -- "$LEGACY_UPDATE_HOME"
+}
+
+# ---------------------------------------------------------------------------
 # Port / collision / ownership helpers
 # ---------------------------------------------------------------------------
 
@@ -909,6 +1138,8 @@ assert_owned_absent() {
       || fail "cleanup left enablement symlink: $WANTS_DIR/$svc.service"
     [[ ! -e "$(env_path_for "$svc")" ]] \
       || fail "cleanup left environment file: $(env_path_for "$svc")"
+    [[ ! -e "$UNIT_DIR/$svc@.service" ]] \
+      || fail "cleanup left template unit file: $UNIT_DIR/$svc@.service"
     [[ ! -e "$UNIT_DIR/$svc.service.d" ]] \
       || fail "cleanup left drop-in directory: $UNIT_DIR/$svc.service.d"
   done
@@ -1129,8 +1360,10 @@ phase_lifecycle() {
 
   run_concurrency_scenario
   run_safe_delete_scenario
+  run_single_instance_acceptance_scenario
+  run_legacy_single_instance_scenario
 
-  ok "lifecycle: start/stop/start, restart, disabled restart, env modes, logs, concurrent registrations and safe-delete failure verified"
+  ok "lifecycle: start/stop/start, restart, disabled restart, env modes, logs, concurrent registrations, safe-delete, single-instance and legacy rejection verified"
 }
 
 # ---------------------------------------------------------------------------
@@ -1289,6 +1522,223 @@ EOF
     || fail "safe-delete: drop-in directory still exists after cleanup"
 
   ok "lifecycle/safe-delete: refused stop kept unit/env/state, then explicit delete succeeded"
+}
+
+# ---------------------------------------------------------------------------
+# Lifecycle sub-scenario: accepted instance counts create one service
+# ---------------------------------------------------------------------------
+
+run_single_instance_acceptance_scenario() {
+  local log
+  local health
+  local eco
+
+  info "Creating $APP_SINGLE_FLAG with -i 4; one base service is expected"
+  assert_no_owned_collision "$ZM2_HOME" "$APP_SINGLE_FLAG" "$SVC_SINGLE_FLAG"
+  assert_port_free "$PORT_SINGLE_FLAG" "single -i4"
+  log="$EVIDENCE_DIR/lifecycle/single-flag.log"
+  health="$EVIDENCE_DIR/lifecycle/single-flag-health.json"
+  HOST=127.0.0.1 PORT="$PORT_SINGLE_FLAG" \
+    run_zm2 start "$FIXTURE" \
+      --name "$APP_SINGLE_FLAG" \
+      --interpreter "$OLD_NODE" \
+      --cwd "$FIXTURE_DIR" \
+      -i 4 > "$log" 2>&1
+  assert_single_warning "single -i4" "$log"
+  assert_single_instance_app "single -i4" "$ZM2_HOME" "$APP_SINGLE_FLAG" \
+    "$SVC_SINGLE_FLAG" "$PORT_SINGLE_FLAG" "$health"
+  assert_env_contains "single -i4" "$(env_path_for "$SVC_SINGLE_FLAG")" "PORT=$PORT_SINGLE_FLAG"
+
+  info "Creating $APP_SINGLE_MAX with --instances max; one base service is expected"
+  assert_no_owned_collision "$ZM2_HOME" "$APP_SINGLE_MAX" "$SVC_SINGLE_MAX"
+  assert_port_free "$PORT_SINGLE_MAX" "single max"
+  log="$EVIDENCE_DIR/lifecycle/single-max.log"
+  health="$EVIDENCE_DIR/lifecycle/single-max-health.json"
+  HOST=127.0.0.1 PORT="$PORT_SINGLE_MAX" \
+    run_zm2 start "$FIXTURE" \
+      --name "$APP_SINGLE_MAX" \
+      --interpreter "$OLD_NODE" \
+      --cwd "$FIXTURE_DIR" \
+      --instances max > "$log" 2>&1
+  assert_single_warning "single max" "$log"
+  assert_single_instance_app "single max" "$ZM2_HOME" "$APP_SINGLE_MAX" \
+    "$SVC_SINGLE_MAX" "$PORT_SINGLE_MAX" "$health"
+
+  info "Creating $APP_SINGLE_ECO from an ecosystem using process.env.INSTANCES=3"
+  assert_no_owned_collision "$ZM2_HOME" "$APP_SINGLE_ECO" "$SVC_SINGLE_ECO"
+  assert_port_free "$PORT_SINGLE_ECO" "single ecosystem"
+  eco="$TMP_DIR/compose-e2e-single-ecosystem.config.js"
+  ECO_FILE="$eco" ECO_APP="$APP_SINGLE_ECO" ECO_SCRIPT="$FIXTURE" \
+    ECO_CWD="$FIXTURE_DIR" ECO_NODE="$OLD_NODE" ECO_PORT="$PORT_SINGLE_ECO" \
+    "$CLI_NODE" -e '
+    var fs = require("fs");
+    var e = process.env;
+    var source = "module.exports = { apps: [{ name: " + JSON.stringify(e.ECO_APP) +
+      ", script: " + JSON.stringify(e.ECO_SCRIPT) +
+      ", cwd: " + JSON.stringify(e.ECO_CWD) +
+      ", interpreter: " + JSON.stringify(e.ECO_NODE) +
+      ", instances: process.env.INSTANCES, env: { HOST: \"127.0.0.1\", PORT: " +
+      JSON.stringify(e.ECO_PORT) + ", INSTANCES: process.env.INSTANCES } }] };\n";
+    fs.writeFileSync(e.ECO_FILE, source);
+  '
+  log="$EVIDENCE_DIR/lifecycle/single-ecosystem.log"
+  health="$EVIDENCE_DIR/lifecycle/single-ecosystem-health.json"
+  ( export INSTANCES=3; run_zm2_home "$ZM2_HOME" 120 start "$eco" > "$log" 2>&1 )
+  assert_single_warning "single ecosystem" "$log"
+  assert_single_instance_app "single ecosystem" "$ZM2_HOME" "$APP_SINGLE_ECO" \
+    "$SVC_SINGLE_ECO" "$PORT_SINGLE_ECO" "$health"
+  assert_env_contains "single ecosystem" "$(env_path_for "$SVC_SINGLE_ECO")" "INSTANCES=3"
+
+  delete_scenario_app "single -i4 delete" "$APP_SINGLE_FLAG" "$SVC_SINGLE_FLAG"
+  delete_scenario_app "single max delete" "$APP_SINGLE_MAX" "$SVC_SINGLE_MAX"
+  delete_scenario_app "single ecosystem delete" "$APP_SINGLE_ECO" "$SVC_SINGLE_ECO"
+
+  ok "lifecycle/single-instance: -i4, --instances max and ecosystem INSTANCES=3 each created one healthy base service"
+}
+
+# ---------------------------------------------------------------------------
+# Lifecycle sub-scenario: legacy template rejection and continued stop/delete
+# ---------------------------------------------------------------------------
+
+run_legacy_single_instance_scenario() {
+  local template="$UNIT_DIR/$SVC_LEGACY@.service"
+  local env_file
+  local log
+  local report
+  local unit_sha
+  local env_sha
+  local state_sha
+  local iso_state_sha
+  local pid0
+  local pid1
+  local old_sig
+  local target_sig
+  local rc
+
+  assert_no_owned_collision "$ZM2_HOME" "$APP_LEGACY" "$SVC_LEGACY"
+  [[ ! -e "$template" ]] || fail "legacy: template already exists: $template"
+  [[ ! -L "$WANTS_DIR/$SVC_LEGACY@.service" ]] \
+    || fail "legacy: template enablement symlink already exists"
+
+  create_legacy_fixture "$ZM2_HOME"
+  env_file="$(env_path_for "$SVC_LEGACY")"
+  unit_sha="$(sha256_file "$template")"
+  env_sha="$(sha256_file "$env_file")"
+  state_sha="$(state_entry_sha "$ZM2_HOME" "$SVC_LEGACY")"
+  pid0="$(unit_pid "$SVC_LEGACY@0")"
+  pid1="$(unit_pid "$SVC_LEGACY@1")"
+
+  run_legacy_rejection "legacy start" "$EVIDENCE_DIR/lifecycle/legacy-start.log" \
+    run_zm2 start "$APP_LEGACY"
+  assert_legacy_snapshot_unchanged "legacy start" "$ZM2_HOME" \
+    "$unit_sha" "$env_sha" "$state_sha" "$pid0" "$pid1"
+
+  run_legacy_rejection "legacy restart" "$EVIDENCE_DIR/lifecycle/legacy-restart.log" \
+    run_zm2 restart "$APP_LEGACY"
+  assert_legacy_snapshot_unchanged "legacy restart" "$ZM2_HOME" \
+    "$unit_sha" "$env_sha" "$state_sha" "$pid0" "$pid1"
+
+  run_legacy_rejection "legacy reload" "$EVIDENCE_DIR/lifecycle/legacy-reload.log" \
+    run_zm2 reload "$APP_LEGACY"
+  assert_legacy_snapshot_unchanged "legacy reload" "$ZM2_HOME" \
+    "$unit_sha" "$env_sha" "$state_sha" "$pid0" "$pid1"
+
+  # Discovered aliases must retain their unit identity, never resolve to numeric ID 0.
+  local action
+  for action in start restart reload; do
+    log="$EVIDENCE_DIR/lifecycle/legacy-alias-$action.log"
+    run_legacy_rejection "legacy alias $action" "$log" \
+      run_zm2 "$action" "$APP_LEGACY@0"
+    grep -Fq "$SVC_LEGACY@0" "$log" \
+      || fail "legacy alias $action: selected instance identity was lost"
+    assert_legacy_snapshot_unchanged "legacy alias $action" "$ZM2_HOME" \
+      "$unit_sha" "$env_sha" "$state_sha" "$pid0" "$pid1"
+    run_legacy_rejection "legacy canonical ID $action" \
+      "$EVIDENCE_DIR/lifecycle/legacy-canonical-$action.log" \
+      run_zm2 "$action" "$SVC_LEGACY@0.service"
+    assert_legacy_snapshot_unchanged "legacy canonical ID $action" "$ZM2_HOME" \
+      "$unit_sha" "$env_sha" "$state_sha" "$pid0" "$pid1"
+  done
+
+  info "Disabling and stopping legacy instance 1 before the startup rejection check"
+  systemctl disable "$SVC_LEGACY@1.service" >/dev/null
+  systemctl stop "$SVC_LEGACY@1.service"
+  wait_inactive "$SVC_LEGACY@1"
+  wait_pid_zero "$SVC_LEGACY@1"
+  assert_enabled_state "legacy startup precondition" "$SVC_LEGACY@1" 0
+
+  run_legacy_rejection "legacy startup" "$EVIDENCE_DIR/lifecycle/legacy-startup.log" \
+    run_zm2 startup
+  assert_enabled_state "legacy startup" "$SVC_LEGACY@1" 0
+  wait_inactive "$SVC_LEGACY@1"
+  assert_enabled_state "legacy startup instance 0" "$SVC_LEGACY@0" 1
+  assert_legacy_snapshot_unchanged "legacy startup" "$ZM2_HOME" \
+    "$unit_sha" "$env_sha" "$state_sha" "$pid0" 0 0
+
+  info "Re-enabling legacy instance 1 for stop/delete coverage"
+  systemctl enable "$SVC_LEGACY@1.service" >/dev/null
+  systemctl start "$SVC_LEGACY@1.service"
+  wait_active "$SVC_LEGACY@1"
+  pid1="$(unit_pid "$SVC_LEGACY@1")"
+
+  old_sig="$(runtime_signature "$OLD_NODE")"
+  target_sig="$(runtime_signature "$TARGET_NODE")"
+  # Fresh private state: never update services from a reused or symlinked home.
+  LEGACY_UPDATE_HOME="$(mktemp -d "$TMP_DIR/legacy-update-home.XXXXXX")"
+  write_legacy_state "$LEGACY_UPDATE_HOME"
+  iso_state_sha="$(state_entry_sha "$LEGACY_UPDATE_HOME" "$SVC_LEGACY")"
+  report="$EVIDENCE_DIR/lifecycle/legacy-update-node.log"
+  if run_zm2_home "$LEGACY_UPDATE_HOME" 120 update-node "$TARGET_VERSION" > "$report" 2>&1; then
+    rc=0
+  else
+    rc=$?
+  fi
+  [[ "$rc" -eq 1 ]] || fail "legacy update-node: expected exit 1, got $rc"
+  grep -Fq "$SVC_LEGACY" "$report" \
+    || fail "legacy update-node: report does not mention $SVC_LEGACY"
+  grep -Eqi 'multi-instance|single-instance' "$report" \
+    || fail "legacy update-node: report does not mention disabled multi-instance support"
+  grep -Eq 'failed, unchanged|failed_unchanged' "$report" \
+    || fail "legacy update-node: report does not mark the service failed, unchanged"
+  grep -Fq 'Node.js runtime: not prepared' "$report" \
+    || fail "legacy update-node: report shows a prepared runtime"
+  assert_legacy_snapshot_unchanged "legacy update-node" "$ZM2_HOME" \
+    "$unit_sha" "$env_sha" "$state_sha" "$pid0" "$pid1"
+  [[ "$(state_entry_sha "$LEGACY_UPDATE_HOME" "$SVC_LEGACY")" == "$iso_state_sha" ]] \
+    || fail "legacy update-node: isolated StateStore entry changed"
+  [[ "$(runtime_signature "$OLD_NODE")" == "$old_sig" ]] \
+    || fail "legacy update-node: old runtime changed"
+  [[ "$(runtime_signature "$TARGET_NODE")" == "$target_sig" ]] \
+    || fail "legacy update-node: target runtime changed"
+
+  remove_legacy_update_home || fail "legacy update-node: cannot remove isolated home"
+
+  info "Disabling legacy startup entries through the CLI unstartup"
+  run_zm2 unstartup > "$EVIDENCE_DIR/lifecycle/legacy-unstartup.log" 2>&1
+  assert_enabled_state "legacy unstartup instance 0" "$SVC_LEGACY@0" 0
+  assert_enabled_state "legacy unstartup instance 1" "$SVC_LEGACY@1" 0
+  [[ -e "$template" ]] || fail "legacy unstartup: template unit was removed"
+  state_has_service "$ZM2_HOME" "$SVC_LEGACY" \
+    || fail "legacy unstartup: StateStore entry was removed"
+
+  info "Stopping legacy $SVC_LEGACY through the CLI"
+  log="$EVIDENCE_DIR/lifecycle/legacy-stop.log"
+  run_zm2 stop "$APP_LEGACY" > "$log" 2>&1
+  wait_inactive "$SVC_LEGACY@0"
+  wait_inactive "$SVC_LEGACY@1"
+  wait_pid_zero "$SVC_LEGACY@0"
+  wait_pid_zero "$SVC_LEGACY@1"
+  [[ -e "$template" ]] || fail "legacy stop: template unit was removed"
+  [[ -e "$env_file" ]] || fail "legacy stop: environment file was removed"
+  state_has_service "$ZM2_HOME" "$SVC_LEGACY" \
+    || fail "legacy stop: StateStore entry was removed"
+
+  info "Deleting legacy $SVC_LEGACY through the CLI"
+  run_zm2 delete "$APP_LEGACY" > "$EVIDENCE_DIR/lifecycle/legacy-delete.log" 2>&1
+  systemctl reset-failed "$SVC_LEGACY@0.service" "$SVC_LEGACY@1.service" >/dev/null 2>&1 || true
+  assert_legacy_absent "legacy delete"
+
+  ok "lifecycle/legacy: start/restart/reload/startup/update-node rejected before mutation; stop/delete handled all instances"
 }
 
 # ---------------------------------------------------------------------------
@@ -1709,16 +2159,26 @@ delete_owned_app() {
   local app="$2"
   local svc="$3"
   local log="$EVIDENCE_DIR/cleanup/delete-$svc.log"
+  local template="$UNIT_DIR/$svc@.service"
+  local had_template=0
   local rc
 
+  if [[ -e "$template" ]]; then
+    had_template=1
+  fi
   if [[ -e "$(unit_path_for "$svc")" ]] \
     && ! grep -Fq "Description=ZM2: $app" "$(unit_path_for "$svc")"; then
     warn "not deleting unexpected unit $(unit_path_for "$svc")"
     return 1
   fi
+  if [[ -e "$template" ]] && ! grep -Fq "Description=ZM2: $app" "$template"; then
+    warn "not deleting unexpected template unit $template"
+    return 1
+  fi
 
   if state_has_service "$home" "$svc" \
     || [[ -e "$(unit_path_for "$svc")" ]] \
+    || [[ -e "$template" ]] \
     || [[ -e "$(env_path_for "$svc")" ]] \
     || [[ -L "$WANTS_DIR/$svc.service" ]]; then
     info "Deleting $svc through the ZM2 CLI"
@@ -1729,7 +2189,7 @@ delete_owned_app() {
 
     if [[ "$rc" -ne 0 ]]; then
       warn "delete failed for $svc (exit $rc); resetting failed state and retrying once"
-      systemctl reset-failed "$svc.service" >/dev/null 2>&1 || true
+      systemctl reset-failed "$svc.service" "$svc@0.service" "$svc@1.service" >/dev/null 2>&1 || true
       set +e
       run_zm2_home "$home" 120 delete "$app" >> "$log" 2>&1
       rc=$?
@@ -1744,6 +2204,9 @@ delete_owned_app() {
 
   # Removed failed services can remain as not-found/failed tombstones in PID 1.
   # Clear only the owned unit, after its CLI deletion has succeeded.
+  if [[ "$had_template" -eq 1 ]]; then
+    systemctl reset-failed "$svc@0.service" "$svc@1.service" >/dev/null 2>&1 || true
+  fi
   if [[ "$(unit_active_state "$svc")" == failed ]]; then
     systemctl reset-failed "$svc.service" || return 1
   fi
@@ -1786,6 +2249,14 @@ phase_cleanup() {
     || failures=$((failures + 1))
   delete_owned_app "$ZM2_HOME" "$APP_DELETE" "$SVC_DELETE" \
     || failures=$((failures + 1))
+  delete_owned_app "$ZM2_HOME" "$APP_SINGLE_FLAG" "$SVC_SINGLE_FLAG" \
+    || failures=$((failures + 1))
+  delete_owned_app "$ZM2_HOME" "$APP_SINGLE_MAX" "$SVC_SINGLE_MAX" \
+    || failures=$((failures + 1))
+  delete_owned_app "$ZM2_HOME" "$APP_SINGLE_ECO" "$SVC_SINGLE_ECO" \
+    || failures=$((failures + 1))
+  delete_owned_app "$ZM2_HOME" "$APP_LEGACY" "$SVC_LEGACY" \
+    || failures=$((failures + 1))
 
   for ((i = 0; i < CONCURRENT_COUNT; i++)); do
     delete_owned_app "$ZM2_HOME" "${CONCURRENT_APPS[$i]}" "${CONCURRENT_SVCS[$i]}" \
@@ -1800,8 +2271,12 @@ phase_cleanup() {
     || failures=$((failures + 1))
 
   systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl reset-failed "$SVC_LEGACY@0.service" "$SVC_LEGACY@1.service" >/dev/null 2>&1 || true
 
   if ! remove_nested_home; then
+    failures=$((failures + 1))
+  fi
+  if ! remove_legacy_update_home; then
     failures=$((failures + 1))
   fi
 
@@ -1810,10 +2285,19 @@ phase_cleanup() {
     "$SVC_BOOT_ENABLED" \
     "$SVC_BOOT_STOPPED" \
     "$SVC_DELETE" \
+    "$SVC_SINGLE_FLAG" \
+    "$SVC_SINGLE_MAX" \
+    "$SVC_SINGLE_ECO" \
+    "$SVC_LEGACY" \
     "${CONCURRENT_SVCS[@]}" \
     "$SVC_NR_FAIL" \
     "$SVC_NR_OK" \
     "$SVC_NR_STOPPED"
+
+  [[ ! -e "$UNIT_DIR/$SVC_LEGACY@.service" ]] \
+    || fail "cleanup left the legacy template unit"
+  [[ -z "$(find "$WANTS_DIR" -maxdepth 1 -name "$SVC_LEGACY@*.service" -print -quit 2>/dev/null || true)" ]] \
+    || fail "cleanup left legacy template enablement symlinks"
 
   if [[ -f "$(state_file_for "$ZM2_HOME")" ]]; then
     if ! owned="$(state_keys "$ZM2_HOME")"; then
