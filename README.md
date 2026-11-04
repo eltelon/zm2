@@ -37,7 +37,7 @@ zm2 CLI  ──►  systemctl / journalctl  ──►  systemd units (zm2-<name>
 | Artifact | Location |
 |---|---|
 | Service unit | `/etc/systemd/system/zm2-<name>.service` |
-| Template unit (multi-instance) | `/etc/systemd/system/zm2-<name>@.service` |
+| Legacy template unit (removal supported) | `/etc/systemd/system/zm2-<name>@.service` |
 | Cron-restart timer | `/etc/systemd/system/zm2-<name>-cron.timer` |
 | Environment file | `/etc/zm2/env/zm2-<name>.env` |
 | ZM2 state (metadata) | `~/.zm2/state.json` |
@@ -190,13 +190,29 @@ All metrics are labeled with `name="<app>"`.
 
 API logs: `journalctl -u zm2-api -f`.
 
-## Multiple Instances
+## Single Instance per Application
+
+ZM2 always creates one systemd service per application. `-i`, `--instances` and ecosystem/API `instances` are accepted for compatibility, but normalized to `1`. A requested value other than one (including `0` or `max`) produces a warning, not extra processes:
 
 ```bash
-$ sudo zm2 start api.js -i 4
+$ sudo zm2 start api.js -i 4  # warns, starts only zm2-api.service
 ```
 
-Creates a systemd template unit `zm2-api@.service` with instances `@0` through `@3`. Each instance gets `NODE_APP_INSTANCE` set to its index.
+An application environment variable such as `env: { INSTANCES: 4 }` remains unchanged; it does not control ZM2's process count. If an ecosystem reads `process.env.INSTANCES` into its `instances` field, the resulting count is still normalized to one. ZM2 does not load `.env` files automatically, share HTTP listeners or provide cluster load balancing. Separate named applications can still run independently.
+
+### Existing multi-instance applications
+
+Legacy templates remain visible and support logs, stop, delete and unstartup. Discovered units without StateStore metadata use their canonical unit name (such as `zm2-api@0.service`) as ID instead of an invented numeric ID. Start, restart, reload, startup and update-node reject them without changing their configuration or activating instances. Batch operations may still process eligible single services, but report failure if a legacy application is rejected. This includes `resurrect`; installing/restarting the HTTP API also refuses a conflicting legacy `zm2-api` template.
+
+**Upgrading does not automatically stop or disable existing units.** Already enabled units can still start at boot, and systemd restart policies remain in effect. To replace a legacy group, schedule downtime and explicitly remove it before recreating it:
+
+```bash
+$ sudo zm2 stop api
+$ sudo zm2 delete api
+$ sudo zm2 start /absolute/path/api.js --name api
+```
+
+Reapply the required cwd, interpreter and environment configuration when recreating. Verify each command succeeds before continuing; do not delete StateStore or locks to bypass errors.
 
 ## Ecosystem Config
 
@@ -210,7 +226,7 @@ module.exports = {
   apps: [{
     name: 'api',
     script: 'server.js',
-    instances: 2,
+    instances: 1, // compatibility option; ZM2 always uses one
     max_memory_restart: '500M',
     env: {
       NODE_ENV: 'production',
@@ -258,7 +274,7 @@ ZM2 maps familiar PM2 options to native systemd directives:
 | `gid` | `Group` |
 | `cwd` | `WorkingDirectory` |
 | `cron_restart` | systemd timer unit |
-| `instances: N` | template unit with N instances |
+| `instances: N` | accepted for compatibility; always one service |
 
 Other useful start options: `--node-args`, `--interpreter`, `--uid`, `--gid`, `--env <name>` (ecosystem env section), `--update-env`, `--cron <pattern>`, `--wait-ready`.
 
@@ -318,7 +334,7 @@ The command sources `nvm.sh` from the selected directory as the privileged user.
 - Only applications registered in the selected ZM2 state are considered. The internal ZM2 HTTP API service is excluded.
 - Applications whose `ExecStart` runs a Node.js executable are updated. Only the absolute executable path in `ExecStart` is replaced, and the runtime's `bin` directory is prepended to the application `PATH` in its environment file. Other unit directives are preserved.
 - Shell or npm wrappers and non-Node interpreters (Python, Bun, ...) are skipped; ZM2 does not reinterpret their commands.
-- Applications are processed sequentially. Stopped applications receive the new configuration but are not started. A multi-instance application is updated as one unit and rolled back as a whole.
+- Applications are processed sequentially. Stopped single-service applications receive the new configuration but are not started. Legacy multi-instance/template applications are reported as failed without changes, before runtime installation or activation; eligible single services still proceed.
 - The nvm default alias, previous Node.js runtimes, ecosystem files, global npm packages and lockfiles are not modified. `npm rebuild` is not run.
 
 Each restarted instance must remain `active/running`, keep a valid main PID, run the selected Node.js executable and accumulate no systemd restarts during a 5-second observation window. This detects early startup failures only: it is not an HTTP, database or functional health check. Expect downtime while instances restart; updates are not zero-downtime.
@@ -345,7 +361,7 @@ By default, on a per-application failure ZM2 restores only that application's fi
 $ zm2 update-node 26.12.1 --no-rollback
 ```
 
-This commits the new Node executable, `PATH` and StateStore metadata before restarting. If a restart or startup verification fails, ZM2 keeps that configuration, attempts the remaining active instances and applications, and reports `configuration updated; startup failed; no rollback`. Stopped instances stay stopped. Verification is still performed and the exit code remains `1` on any failure; the report does not claim the application is running successfully on the new runtime. Use this deliberately: services may remain unavailable and require manual investigation.
+This commits the new Node executable, `PATH` and StateStore metadata before restarting. If a restart or startup verification fails, ZM2 keeps that configuration, continues with the remaining eligible applications, and reports `configuration updated; startup failed; no rollback`. Stopped instances stay stopped. Verification is still performed and the exit code remains `1` on any failure; the report does not claim the application is running successfully on the new runtime. Use this deliberately: services may remain unavailable and require manual investigation.
 
 The flag disables rollback for startup failures only. Installation, validation, configuration-write, daemon-reload and metadata-persistence errors retain the normal safeguards. The programmatic equivalent is `zm2.updateNode(version, { rollback: false }, callback)`; the existing `zm2.updateNode(version, callback)` still enables automatic rollback.
 
@@ -412,7 +428,7 @@ All `ZM2_*` variables fall back to `PM2_*` equivalents for compatibility.
 ZM2 removes the custom daemon architecture in favor of systemd:
 
 - **No daemon** — CLI talks directly to systemd via `systemctl`
-- **No fork/cluster mode** — apps run as `Type=simple` systemd services (`instances: N` maps to template units, not cluster workers)
+- **No fork/cluster mode** — apps run as `Type=simple` systemd services (`instances` is accepted but always normalized to one; legacy template activation is rejected)
 - **No custom log files** — journald handles all logging
 - **No file watching** — use external tools or CI/CD for deploys
 - **No pm2-plus** — cloud monitoring integration removed

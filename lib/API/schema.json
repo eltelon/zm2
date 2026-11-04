@@ -114,7 +114,7 @@
   "instances": {
     "type": "number",
     "docDefault": 1,
-    "docDescription": "Number of instances to start via systemd template units"
+    "docDescription": "Compatibility option; always normalized to one systemd service"
   },
   "kill_timeout": {
     "type": "number",
@@ -197,13 +197,13 @@
   },
   "increment_var": {
     "type": "string",
-    "docDescription": "Specify the name of an environment variable to inject which increments for each cluster"
+    "docDescription": "Legacy compatibility option; no per-instance increment is performed"
   },
   "instance_var": {
     "type": "string",
     "default": "NODE_APP_INSTANCE",
     "docDefault": "NODE_APP_INSTANCE",
-    "docDescription": "Rename the NODE_APP_INSTANCE environment variable"
+    "docDescription": "Legacy template instance variable name; new services have no injected instance index"
   },
   "port": {
     "type": "number",
